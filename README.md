@@ -7,18 +7,21 @@ validation has not yet been performed.
 
 ## Download the Android alpha
 
-[Download ArkhamScan 0.1.0 alpha (debug APK)](https://github.com/boosted3svt/ArkhamScan/raw/refs/heads/main/downloads/ArkhamScan-0.1.0-alpha-debug.apk)
+[Download ArkhamScan 0.2.0 alpha (debug APK)](https://github.com/boosted3svt/ArkhamScan/raw/refs/heads/main/downloads/ArkhamScan-0.2.0-alpha-debug.apk)
 
 Transfer the APK to your phone and open it to install. Android may ask you to allow
 installation from the browser or file manager you selected. This is a development
-build, not a production release. Automatic recognition is disabled; import an
-authorized reference catalog and confirm physical copies manually as described below.
+build, not a production release. Open **Overview → Download from ArkhamDB** to get started. No database file,
+account, or API key is required. Automatic recognition acceptance remains disabled;
+confirm physical copies in Interactive mode as described below.
 The APK's SHA-256 is recorded in [downloads/SHA256SUMS](downloads/SHA256SUMS).
 
 ## What works
 
-- Import a versioned metadata-only local catalog; search titles, codes, numbers,
-  encounter identifiers, types, and reference packs offline.
+- Download card/pack metadata directly from ArkhamDB (including encounter cards),
+  then search it offline. No file preparation is required. Local import is optional.
+- Open a card’s live ArkhamDB page in your browser to inspect the reference artwork
+  and details. Images are not downloaded or retained by this app.
 - Explicitly confirm physical copies, including legitimate extras; audited undo and
   idempotent transactions keep repeated actions from inflating ownership.
 - Experimental live OCR offers title candidates. Rapid presentations queue metadata
@@ -31,7 +34,8 @@ The APK's SHA-256 is recorded in [downloads/SHA256SUMS](downloads/SHA256SUMS).
   hashes, sessions, pass maps, routes, and audit events.
 
 **Automatic recognition acceptance is intentionally disabled.** No real-specimen
-accuracy or reference-image rights have been established. Reference packs are
+accuracy measurements have been established. Online metadata and website lookup
+do not depend on implementing offline reference-image matching. Reference packs are
 provisional sorting destinations, not verified retail manifests. Missing-card
 percentages, original-box provenance, backup restore, and reference imagery are not
 implemented. JSON is an audit export, not a restorable backup. See
@@ -56,7 +60,34 @@ This cloud workspace additionally uses `source tools/cloud-env.sh` before Gradle
 The existing checkouts are already isolated; do not create Git worktrees for setup.
 `tools/setup-cloud.sh` refreshes dependencies using an already-installed SDK/JDK.
 
-## Local reference import
+## Get started with ArkhamDB
+
+1. Install the **0.2.0 alpha** APK above over the first alpha; it uses the same
+   development signing key and database schema. Keep your existing inventory.
+2. With internet available, open **Overview** and tap **Download from ArkhamDB**.
+   The app fetches ArkhamDB’s public packs and cards APIs, with encounter cards
+   included, and saves the selected metadata locally. No account or API key needed.
+3. Go to **Scan**. **Interactive** is selected by default. Search the title or use
+   camera OCR for suggestions, then select the exact printing. **View card on
+   ArkhamDB** opens its live website page in your browser for comparison.
+4. Confirm **New physical copy** once for each physical copy you hold. Use
+   **Collection** to check counts, undo errors, and export.
+5. Use **Piles** after recording inventory to plan and perform count-preserving
+   sorting passes. Rapid mode currently routes every camera presentation to Re-sort;
+   it is not yet the finished hands-free recognition workflow.
+
+Use **Settings → Refresh from ArkhamDB** for later updates. Failed downloads keep
+your previous catalog and ownership unchanged. Cached metadata supports offline
+search/OCR suggestions; browser pages require internet. No images, rules text, or
+camera frames are uploaded or saved by the metadata downloader. It makes public
+HTTPS GET requests with timeouts, redirect checks and bounded response sizes.
+
+If a refresh fails, the app displays the reason and offers retry through the same
+button. This cloud environment blocks live ArkhamDB traffic until its network
+settings are applied; parser/persistence tests use API-shaped fixtures, so live
+API connectivity on a phone is not claimed as verified.
+
+## Optional local reference import
 
 No card database, images, or rules text are bundled. Establish that your intended
 use of a source is permitted. Given a local ArkhamDB JSON checkout:
@@ -65,7 +96,7 @@ use of a source is permitted. Given a local ArkhamDB JSON checkout:
 python3 tools/import_arkhamdb.py /path/to/arkhamdb-json-data catalog-local.json
 ```
 
-Transfer that JSON to the phone and choose **Import reference catalog**. The
+Transfer that JSON to the phone and choose **Import a catalog file instead**. The
 converter performs no network requests, omits artwork/rules/expected quantities,
 rejects conflicting IDs, and refuses to overwrite an existing output. Local
 conversion in this workspace produced 5,524 printings at the audited source
@@ -77,31 +108,27 @@ are optional strings. Import replaces only the current reference catalog. Existi
 copy history and catalog hashes survive. Imports are transactional, limited to
 16 MiB / 50,000 cards, and reject duplicate IDs.
 
-## Use the alpha
+## Inventory safeguards
 
-1. Import a reference catalog. In **Scan**, search or start experimental live OCR.
-2. In rapid mode, stable text presentations go to a physical **Re-sort** pile.
-   The camera never silently adds inventory. Fully remove the card between scans.
-   Speech requires an installed offline English TTS voice; install one in Android
-   text-to-speech settings if the app reports it missing.
-3. In interactive mode, select the correct printing and confirm **New physical
-   copy** only for an additional owned card. **Cancel** adds none. For a linked Re-sort attempt, **Already counted** resolves
-   that attempt without adding ownership; dismissing the dialog keeps it pending.
-4. Use **Collection** to inspect counts, remove mistaken copies, and export records.
-5. Set your table capacity in **Settings**, then simulate/freeze a plan in **Piles**.
-   Pick up its specified source pile, keep other piles separate, and route existing
-   copies. Source-count exhaustion blocks further routes. Complete/reconcile the
-   parent before subdividing its groups. Earlier pass maps remain inspectable.
-   An interrupted or mismatched pass may be abandoned without changing ownership;
-   physically reconcile its piles before starting again.
+The camera never silently adds inventory in this alpha. Fully remove the card
+between rapid presentations. Speech requires an installed offline English TTS
+voice; install one in Android text-to-speech settings if reported missing.
 
-The Re-sort session count counts camera instructions, not physical uniqueness.
-Pending records and ownership totals are separate. Identical cards cannot be
-reliably linked to earlier attempt records; reconcile manually.
+Confirm **New physical copy** only for an additional owned card. **Cancel** adds
+none. For a linked Re-sort attempt, **Already counted** resolves the attempt
+without adding ownership; dismissing the dialog keeps it pending. Re-sort session
+counts track instructions, not unique physical cards. Reconcile the physical pile
+separately from pending records.
+
+Saved sorting passes freeze their source counts and maps. Route only existing
+copies, complete/reconcile the parent before subdividing groups, or abandon a
+mismatched pass without changing ownership and physically reconcile its piles.
 
 ## Privacy and architecture
 
-The APK has no internet permission. Frames stay in CameraX/ML Kit memory and are
+The APK uses internet for optional ArkhamDB metadata refresh. Card reference pages
+open in the user’s browser. Camera recognition stays on-device; frames stay in
+CameraX/ML Kit memory and are
 closed after OCR; no capture, crop, screenshot, thumbnail, or video write path is
 provided. Candidate IDs, attempt reasons, and timestamps are retained. Android and
 camera libraries may buffer frames outside application control. Screenshot
@@ -111,7 +138,8 @@ capture. Exports use Android's user-selected document picker.
 - `core/`: platform-free routing policy, presentation gate, retail model,
   verified-only completeness, planner/simulator, and source-count ledger.
 - `app/`: Compose screens, bundled OCR analyzer, Room database (schema v1),
-  transactional decisions, audio, catalog import, and exports.
+  transactional decisions, audio, public ArkhamDB metadata download, optional local
+  catalog import, browser reference links, and exports.
 - `app/schemas/`: Room's generated schema for future migrations. This is the initial
   schema; no upgrade migration is claimed or tested yet.
 - Tests: JVM domain tests and Robolectric tests exercising real Room transactions,

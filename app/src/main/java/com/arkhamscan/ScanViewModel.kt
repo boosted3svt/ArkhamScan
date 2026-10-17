@@ -22,9 +22,10 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     val passes = store.passes().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val routes = store.routes().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val databaseReady = MutableStateFlow(false)
-    val message = MutableStateFlow("Ready. Import a reference catalog to begin.")
+    val message = MutableStateFlow("Tap Download from ArkhamDB to get started.")
+    val downloadingCatalog = MutableStateFlow(false)
     val suggestions = MutableStateFlow<List<CatalogCard>>(emptyList())
-    val mode = MutableStateFlow(Mode.RAPID_NEW_INVENTORY)
+    val mode = MutableStateFlow(Mode.INTERACTIVE_RESOLUTION)
     val silent = MutableStateFlow(false)
     val speechRate = MutableStateFlow(1f)
     val capacity = MutableStateFlow(5)
@@ -49,7 +50,22 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     private fun work(block: suspend () -> Unit) = viewModelScope.launch {
         try { block() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { message.value = e.message ?: "Operation failed" }
     }
+    fun downloadArkhamDb(client: ArkhamDbCatalog = ArkhamDbCatalog()) {
+        if (downloadingCatalog.value) return
+        downloadingCatalog.value = true
+        work {
+            try {
+                message.value = "Downloading ArkhamDB card and pack metadata…"
+                val imported = withContext(Dispatchers.IO) { client.download() }
+                store.importCards(imported)
+                message.value = "${imported.size} ArkhamDB printings ready. Search or scan in Interactive mode; the catalog now works offline too."
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) { message.value = "Could not update ArkhamDB: ${e.message ?: "check your connection"}. Your inventory and previous catalog are unchanged." }
+            finally { downloadingCatalog.value = false }
+        }
+    }
     fun importCatalog(uri: Uri) = work {
+        require(!downloadingCatalog.value) { "Wait for the ArkhamDB download to finish" }
         val imported = withContext(Dispatchers.IO) {
             val data = getApplication<Application>().contentResolver.openInputStream(uri)?.use { input ->
                 val output = java.io.ByteArrayOutputStream()

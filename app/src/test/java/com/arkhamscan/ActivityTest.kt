@@ -30,9 +30,10 @@ class ActivityTest {
         assertTrue(content.childCount > 0)
         controller.pause().stop().destroy()
     }
-    @Test fun mergedManifestDoesNotGrantNetworkAccess() {
+    @Test fun mergedManifestAllowsCatalogDownloadsButBlocksCleartext() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val permissions = context.packageManager.getPackageInfo(context.packageName, PackageManager.GET_PERMISSIONS).requestedPermissions ?: emptyArray()
-        assertFalse(permissions.contains(android.Manifest.permission.INTERNET))
+        assertTrue(permissions.contains(android.Manifest.permission.INTERNET))
+        assertEquals(0, context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_USES_CLEARTEXT_TRAFFIC)
     }
 }

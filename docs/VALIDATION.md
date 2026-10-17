@@ -1,56 +1,62 @@
-# Validation — 2026-10-17
+# Validation — 0.2.0 alpha (2026-10-17)
 
-Prepared and tested in the cloud workspace with JDK 21, Gradle 8.13, Android SDK
-platform 35, and build tools 35.0.0. Distribution archives were verified against
-checksums supplied by the official Gradle/Android/JDK endpoints; TLS verification
-was retained. Java uses the environment's trusted CA store and existing proxy.
-
-## Executed checks
+Prepared with JDK 21, Gradle 8.13, Android SDK 35 and build tools 35.0.0.
 
 | Check | Result |
 | --- | --- |
-| Domain | 6 passed; 0 failed, skipped, or errors |
-| Android / Room / UI | 14 passed; 0 failed, skipped, or errors |
+| Domain tests | 6 passed |
+| Android / Room / API-parser / UI tests | 23 passed |
 | Python catalog converter | 2 passed |
-| `bash tools/setup-cloud.sh` | Passed in the documented checkout; repeated successfully |
-| `:app:assembleDebug` | Passed |
-| `:app:lintDebug` | Passed with warnings; no errors |
-| `:app:assembleRelease` | Passed; unsigned artifact requires owner signing before installation |
-| APK debug signature | Verified using APK Signature Scheme v2 |
-| APK permissions | CAMERA, VIBRATE, internal receiver permission; no INTERNET |
+| Debug APK build | Passed |
+| Unsigned release APK build | Passed |
+| Debug lint / release vital lint | Passed with warnings, no errors |
+| Debug APK signature | Verified; same certificate as 0.1.0 for in-place updates |
+| Network policy in merged manifest | INTERNET enabled for optional metadata refresh; cleartext disabled |
+| Camera permissions / processing | Camera permission still optional; OCR stays on-device |
 
-The 22 tests cover bounded planning for 5/50/500 destinations, ambiguity, dropout
-suppression, conservative scan policy, ledger recovery, completeness gating,
-transaction idempotency, concurrent retries, audited undo, extras, pending decisions,
-file-backed database reopen, catalog provenance, source exhaustion, abandoned passes,
-import validation, app launch, camera permission, and collection/scan navigation.
-UI tests use isolated in-memory Room storage; separate tests verify real-file
-persistence. Robolectric's paused main looper is explicitly advanced while waiting
-for asynchronous startup. Application-scoped Room ownership survives activity
-recreation without closing an in-flight connection manager.
+Total: 31 automated tests passed, no failed/skipped/error cases.
 
-Lint warnings include KAPT-vs-KSP advice, legacy backup-content configuration advice
-(allowBackup is false and Android 12+ exclusions are explicit), launcher icon
-configuration, and optional KTX style suggestions. No lint failures are suppressed.
+Executed `./gradlew :core:test :app:testDebugUnitTest :app:assembleDebug
+:app:assembleRelease :app:lintDebug` and the Python importer suite. Room's schema
+remains version 1; no schema migration or destructive reset is required for this
+update. Existing confirmation, concurrency, undo, recovery, ambiguity, bounded
+planning (5/50/500 destinations), and count-preserving sorting tests still pass.
+New tests cover metadata requests including encounter cards, filtering hidden
+records, omission of illustrations/rules from cached data, provenance hashes,
+malformed catalog rejection, fixed-host reference links, first-run online setup,
+actual Room persistence after a simulated download, and keeping previous catalog
+and ownership on refresh failure.
 
-## Artifacts
+## Live service limitation
 
-- `app/build/outputs/apk/debug/app-debug.apk`: SHA-256 `b575d8e915c586957c65f09984659f0be8907c73d192d22f2bdbebba8cce5b75`
-- `app/build/outputs/apk/release/app-release-unsigned.apk`: SHA-256 `045dd081ca2192b4986140a14d931465e4ae9859aba4e74d4b4a5d70a2ed5c60`
+This cloud machine's proxy returns CONNECT 403 for arkhamdb.com. This is not a
+measured response from ArkhamDB itself. The endpoint paths and encounter flag were
+verified against Kamalisk/arkhamdb's public routing/controller source; API-shaped
+fixtures exercise parser, UI, failure and persistence behavior. A real live API
+response and physical-phone download have **not** been verified. The app reports
+connection errors without clearing saved data. Domain additions are saved in the
+environment draft; saving does not apply them to this running machine.
 
-The debug APK uses a local development signing key, not an owner-controlled release
-identity. Source and generated Room schema accompany the downloadable debug APK. The
-repository download is a development build, not an owner-signed production release.
+## Privacy and reference behavior
 
-## Not established by these checks
+The catalog client performs public HTTPS GETs for card/pack metadata. It receives
+JSON in memory and stores only selected factual fields and a provenance hash.
+Artwork URLs/bytes and rules/flavor text are not retained. Reference-card links
+open the source website in the external browser. The catalog client has no access
+to CameraX frames; camera images are neither stored nor uploaded by it.
 
-No emulator/physical camera specimen, airplane-mode device run, S26 Ultra audio or
-thermal benchmark, real-card recognition accuracy, catalog illustration rights,
-verified retail manifests, schema-upgrade migration, or backup restore was tested.
-Automatic match acceptance is disabled. Camera OCR is suggestion-only; every rapid
-presentation that passes the experimental text stability gate goes to Re-sort.
-No production readiness or original-box completeness claim is made.
+This replaces the 0.1.0 alpha's no-INTERNET configuration. Optional online catalog
+refresh is now supported, with offline metadata caching; the user does not need to
+create or supply a local database file.
 
-The environment draft saves install_script and start_skill; saving a draft does not
-publish it or prove restoration in a new cloud task. Review/save the configuration
-in environment settings and publish to retain the prepared environment snapshot.
+## Still not established
+
+No real-card recognition accuracy, S26 Ultra camera/audio/thermal benchmark,
+reference-image matching, verified retail manifests, restorable backup, or
+schema-upgrade migration is claimed. Automatic inventory acceptance stays disabled.
+Interactive mode is now the default. Rapid OCR routes presentations to Re-sort.
+
+## Download checksums
+
+- `downloads/ArkhamScan-0.1.0-alpha-debug.apk`: SHA-256 `b575d8e915c586957c65f09984659f0be8907c73d192d22f2bdbebba8cce5b75`
+- `downloads/ArkhamScan-0.2.0-alpha-debug.apk`: SHA-256 `0b54f5566590debc1f3850e9f6c215a4402a9d7dcefdc4e185b4664b466008a0`

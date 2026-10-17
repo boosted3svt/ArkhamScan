@@ -1,6 +1,6 @@
 # Plan review and implementation boundary
 
-Reviewed 2026-10-17. The supplied document is preserved as `original-plan.md`.
+Reviewed 2026-10-17. Updated for the user’s online-reference preference in v0.2.0. The supplied document is preserved as `original-plan.md`.
 
 The native Kotlin/Compose, CameraX, Room, and offline-first choices fit this task. The
 most valuable requirements are conservative recognition, explicit physical-copy
@@ -11,7 +11,7 @@ card face identity. These should remain invariants rather than later polish.
 
 | Risk | Evidence / implication | Decision in this alpha |
 | --- | --- | --- |
-| Catalog rights | Inspected Kamalisk/arkhamdb-json-data README and file tree at `6f4760ebe91db212b54473db605771167d86c842`; no explicit license found. Public availability is not a redistribution grant. | Bundle neither that dataset nor illustrations/rules text. Supply a local, metadata-only converter and a user-selected import. Rights review remains open. |
+| Catalog rights | Inspected Kamalisk/arkhamdb-json-data README and file tree at `6f4760ebe91db212b54473db605771167d86c842`; no explicit license found. Public availability is not a redistribution grant. | Bundle neither that dataset nor illustrations/rules text. Download public API metadata on request and open card pages in the browser. Keep local-file import optional. Image redistribution/matching rights review is separate from website lookup. |
 | Catalog coverage | Local conversion: 5,524 unique visible named printings, 101 referenced packs; 114 pack definitions in the source. This is coverage of the inspected snapshot, not all released content. | Pin provenance to source commit and imported bytes' SHA-256. No completeness claims. |
 | Retail ambiguity | `dwlc`, `dwlp`, `ptcc`, `ptcp`, `tcuc`, `tcup`, `tdec`, `tdep`, `tfac`, `tfap`, `ticc`, `ticp` have no directly associated visible records in the inspected snapshot. | Reference-pack routing is explicitly provisional. Do not infer historical purchase or copy allocation. Domain model separates possible products and explicit allocations. |
 | False matches | No licensed labeled specimen set or physical-device measurements supplied. OCR titles do not distinguish all editions, levels, faces, or shared titles. | OCR produces suggestions only. Automatic inventory acceptance is disabled. Rapid presentations always go to Re-sort; manual confirmation remains functional. |
@@ -29,15 +29,16 @@ card face identity. These should remain invariants rather than later polish.
   are never automatically credited to all products.
 - Room transactions for idempotent confirmations, independent pending attempts,
   audited undo, preserved historical catalog provenance, and ownership-neutral routes.
-- Native manual inventory workflow, offline imported catalog, experimental live OCR,
+- Native manual inventory workflow, online ArkhamDB metadata download with offline cache, optional file import, browser reference links, experimental live OCR,
   exportable records, and immutable pass maps.
 
 ## Gate status and next milestones
 
 This is an **inventory/planning alpha**, not a completed recognition MVP. The plan's
-full-scale recognition gate remains open. Do not enable automatic matches or ship
-catalog illustrations until rights, on-device specimen validation, and exact
-reference-image provenance are established.
+full-scale recognition gate remains open. Automatic acceptance requires on-device specimen validation; an offline illustration
+cache or visual matching implementation separately requires its source terms and
+exact reference-image provenance. Browsing ArkhamDB pages and downloading public
+metadata do not require bundling or distributing card images.
 
 Next required evidence: authorized reference imagery and labeled real specimens;
 verified product manifests with reprint equivalences; physical S26 Ultra tests for

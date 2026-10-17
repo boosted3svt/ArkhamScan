@@ -1,6 +1,8 @@
 package com.arkhamscan
 
 import android.os.Bundle
+import android.content.Intent
+import android.net.Uri
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.speech.tts.TextToSpeech
@@ -83,6 +85,7 @@ private val tabs = listOf("Overview", "Scan", "Collection", "Re-sort", "Piles", 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun ArkhamApp(vm: ScanViewModel) {
     val cards by vm.cards.collectAsStateWithLifecycle()
+    val downloading by vm.downloadingCatalog.collectAsStateWithLifecycle()
     val copies by vm.copies.collectAsStateWithLifecycle()
     val exceptions by vm.exceptions.collectAsStateWithLifecycle()
     val passes by vm.passes.collectAsStateWithLifecycle()
@@ -117,7 +120,7 @@ private val tabs = listOf("Overview", "Scan", "Collection", "Re-sort", "Piles", 
     Scaffold(topBar = {
         TopAppBar(title = { Column { Text("ARKHAMSCAN", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Text("THE COLLECTION DESK", style = MaterialTheme.typography.labelSmall, color = Gold) } },
-            actions = { Text("ALPHA 01", modifier = Modifier.padding(end = 16.dp), style = MaterialTheme.typography.labelSmall, color = Gold) })
+            actions = { Text("ALPHA 02", modifier = Modifier.padding(end = 16.dp), style = MaterialTheme.typography.labelSmall, color = Gold) })
     }, bottomBar = {
         NavigationBar {
             val icons = listOf(Icons.Outlined.Dashboard, Icons.Outlined.CameraAlt, Icons.Outlined.Style,
@@ -139,8 +142,11 @@ private val tabs = listOf("Overview", "Scan", "Collection", "Re-sort", "Piles", 
                         Metric("CONFIRMED COPIES", active.size.toString(), Modifier.weight(1f))
                         Metric("DISTINCT PRINTINGS", active.map { it.cardId }.toSet().size.toString(), Modifier.weight(1f))
                     } }
-                    item { InfoCard("Begin with your reference", if (cards.isEmpty()) "Import a catalog you are authorized to use. No card images or rules text are bundled." else "${cards.size} reference printings available offline. No verified retail manifests installed.")
-                        Button(onClick = { importCatalog.launch(arrayOf("application/json", "text/*")) }, modifier = Modifier.fillMaxWidth()) { Text("Import reference catalog") } }
+                    item { InfoCard("Connect to ArkhamDB", if (cards.isEmpty()) "Download card names, numbers, and set metadata directly from ArkhamDB. No database file, account, or API key needed. Card images stay on the reference website." else "${cards.size} reference printings available offline. You can refresh from ArkhamDB whenever you choose.")
+                        Button(onClick = { vm.downloadArkhamDb() }, enabled = !downloading, modifier = Modifier.fillMaxWidth()) { Text(if (downloading) "Downloading…" else "Download from ArkhamDB") }
+                        if (downloading) LinearProgressIndicator(Modifier.fillMaxWidth())
+                        TextButton(onClick = { openPage(context, "https://arkhamdb.com", vm) }) { Text("Browse ArkhamDB website") }
+                        TextButton(onClick = { importCatalog.launch(arrayOf("application/json", "text/*")) }, enabled = !downloading) { Text("Import a catalog file instead") } }
                     item { Button(onClick = { tab = 1 }, modifier = Modifier.fillMaxWidth(), enabled = cards.isNotEmpty()) { Text("Open scanning desk") } }
                     item { InfoCard("Honest counts, deliberate decisions", "OCR suggests identities; you confirm physical copies. Repeat presentations and uncertain cards never add ownership automatically. Original retail provenance remains unverified.") }
                     item { InfoCard("Readiness", "This foundation has not been validated on physical cards or the Galaxy S26 Ultra. Full automatic recognition, verified missing-card reports, reference imagery, and backup restore are pending.") }
@@ -172,7 +178,7 @@ private val tabs = listOf("Overview", "Scan", "Collection", "Re-sort", "Piles", 
                     } }
                     item { InfoCard("Completeness not yet available", "Reference packs are not verified retail manifests. Unscanned cards mean unknown ownership, not confirmed missing. Identical faces may have multiple retail origins.") }
                     item { OutlinedTextField(search, { search = it }, label = { Text("Search collection") }, modifier = Modifier.fillMaxWidth()) }
-                    if (active.isEmpty()) item { EmptyState("Your collection starts here", "Use the scanning desk to search a reference and explicitly confirm each physical copy.") }
+                    if (active.isEmpty()) item { EmptyState("Your collection starts here", "Download from ArkhamDB on Overview, then use the scanning desk to identify and confirm each physical copy.") }
                     items(active.groupBy { it.cardId }.values.filter { search.isBlank() || it.first().title.contains(search, true) || it.first().packName.contains(search, true) }, key = { it.first().cardId }) { group ->
                         val c = group.first()
                         Surface(shape = RoundedCornerShape(12.dp)) { Column(Modifier.padding(16.dp)) {
@@ -250,9 +256,12 @@ private val tabs = listOf("Overview", "Scan", "Collection", "Re-sort", "Piles", 
                         Text("Speech speed: ${"%.1f".format(rate)}×")
                         Slider(value = rate, onValueChange = { vm.configure(cap, muted, it) }, valueRange = .6f..1.5f)
                     }
-                    item { InfoCard("Camera privacy", "Frames are processed in memory by bundled on-device OCR. No photos, crops, thumbnails, or video files are saved. The app requests no internet permission. Android and CameraX may buffer frames internally. Camera screens block screenshots; pause when leaving the desk.") }
-                    item { InfoCard("Catalog provenance", cards.firstOrNull()?.let { "${it.source}\nSHA-256: ${it.version}\nHistorical copies retain the catalog hash from confirmation. No reference image was matched; no image identity is invented." } ?: "No catalog imported. See tools/import_arkhamdb.py for the local metadata converter.") }
-                    item { OutlinedButton(onClick = { importCatalog.launch(arrayOf("application/json", "text/*")) }) { Text("Import / replace current reference") } }
+                    item { InfoCard("Camera privacy", "Frames are processed in memory by bundled on-device OCR. No photos, crops, thumbnails, or video files are saved. Internet is used for the ArkhamDB catalog download. Camera frames are not sent to ArkhamDB; reference pages open in your browser. Android and CameraX may buffer frames internally. Camera screens block screenshots; pause when leaving the desk.") }
+                    item { InfoCard("Catalog provenance", cards.firstOrNull()?.let { "${it.source}\nSHA-256: ${it.version}\nHistorical copies retain the catalog hash from confirmation. No reference image was matched; no image identity is invented." } ?: "No catalog yet. Use Download from ArkhamDB on Overview; no local file is needed.") }
+                    item {
+                        Button(onClick = { vm.downloadArkhamDb() }, enabled = !downloading) { Text(if (downloading) "Downloading…" else "Refresh from ArkhamDB") }
+                        OutlinedButton(onClick = { importCatalog.launch(arrayOf("application/json", "text/*")) }, enabled = !downloading) { Text("Import a catalog file instead") }
+                    }
                     item { InfoCard("Alpha boundaries", "English OCR; one local collection; foreground camera only. Retail manifest verification, reference-image matching, auto-accept calibration, restore, and device benchmarks remain future milestones. Export JSON for an auditable record; it is not yet a restorable backup.") }
                 }
             }
@@ -268,6 +277,7 @@ private val tabs = listOf("Overview", "Scan", "Collection", "Re-sort", "Piles", 
                 Text("$count confirmed copies · expected quantity unverified")
                 Text(if (mode == Mode.RESORT_EXISTING) "This routes one counted copy through the active source pass. Ownership stays unchanged." else "Select New physical copy only while holding an additional copy you want to count. A repeated presentation alone is not evidence of a new copy.")
                 Text("Retail origin: unverified. No catalog image match performed.", style = MaterialTheme.typography.bodySmall)
+                ArkhamDbCatalog.cardPage(card)?.let { page -> TextButton(onClick = { openPage(context, page, vm) }) { Text("View card on ArkhamDB") } }
             } }, confirmButton = { TextButton(onClick = {
                 if (mode == Mode.RESORT_EXISTING) vm.route(card.id, eventId) else vm.confirm(card, eventId, exceptionId)
                 selected = null
@@ -293,4 +303,9 @@ private fun matches(c: CatalogCard, s: String) = listOf(c.title, c.id, c.number,
             Text("×$count", color = Gold, modifier = Modifier.padding(start = 12.dp))
         }
     }
+}
+
+private fun openPage(context: android.content.Context, address: String, vm: ScanViewModel) {
+    try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(address))) }
+    catch (_: android.content.ActivityNotFoundException) { vm.message.value = "No web browser is installed to open ArkhamDB." }
 }

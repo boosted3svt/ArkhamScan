@@ -31,6 +31,11 @@ class NavigationTest {
         } }
         catch (e: Throwable) { throw AssertionError("Database startup: ${vm.message.value}", e) }
     }
+    @Test fun firstRunOffersOnlineCatalogWithoutPreparingAFile() {
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("Download from ArkhamDB"))
+        compose.onNodeWithText("Download from ArkhamDB").assertIsDisplayed()
+        compose.onNodeWithText("Browse ArkhamDB website").assertExists()
+    }
     @Test fun collectionDoesNotClaimUnverifiedCompleteness() {
         compose.onNodeWithText("Collection").performClick()
         compose.onNodeWithText("Completeness not yet available").assertIsDisplayed()
