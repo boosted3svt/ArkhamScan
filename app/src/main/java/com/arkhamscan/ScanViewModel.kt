@@ -9,13 +9,17 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 import org.json.JSONArray
 import java.util.UUID
 
 class ScanViewModel(app: Application) : AndroidViewModel(app) {
-    private val db = (app as ScanApplication).database
-    private val store = db.store()
+    internal val db = (app as ScanApplication).database
+    internal val store = db.store()
+    internal val operationMutex = Mutex()
+    val remote = RemoteSession(this, viewModelScope)
     val cards = store.cards().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val copies = store.copies().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val exceptions = store.exceptions().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
@@ -67,19 +71,22 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
         preferences.edit().putInt("capacity", capacity.value).putBoolean("silent", muted).putFloat("speechRate", rate).apply()
     }
     private fun work(block: suspend () -> Unit) = viewModelScope.launch {
-        try { block() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { message.value = e.message ?: "Operation failed" }
+        try { operationMutex.withLock { block() } } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { message.value = e.message ?: "Operation failed"; remote.error("operation", message.value) }
     }
     fun downloadArkhamDb(client: ArkhamDbCatalog = ArkhamDbCatalog()) {
         if (downloadingCatalog.value) return
         downloadingCatalog.value = true
-        work {
+        viewModelScope.launch {
             try {
                 message.value = "Downloading ArkhamDB card and pack metadata…"
                 val imported = withContext(Dispatchers.IO) { client.downloadSnapshot() }
-                store.importCards(imported.cards, imported.packs)
+                operationMutex.withLock {
+                    store.importCards(imported.cards, imported.packs)
+                    remote.newPresentation()
+                }
                 message.value = "${imported.cards.size} ArkhamDB printings ready. Search or scan in Interactive mode; the catalog now works offline too."
             } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (e: Exception) { message.value = "Could not update ArkhamDB: ${e.message ?: "check your connection"}. Your inventory and previous catalog are unchanged." }
+            catch (e: Exception) { remote.error("catalog", e.message ?: "Download failed"); message.value = "Could not update ArkhamDB: ${e.message ?: "check your connection"}. Your inventory and previous catalog are unchanged." }
             finally { downloadingCatalog.value = false }
         }
     }
@@ -101,6 +108,7 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
             CatalogImporter.snapshot(data)
         }
         store.importCards(imported.cards, imported.packs)
+                remote.newPresentation()
         message.value = "Imported ${imported.cards.size} printings. Retail manifests remain unverified."
     }
     fun setCutoff(cutoff: String) = work {
@@ -128,16 +136,21 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     }
     /** OCR supplies suggestions only. No confidence calibration or image identity is fabricated. */
     fun recognizedText(text: String) {
+        if (remote.commandBusy) return
+        remote.ocrSummary.value = text.take(400)
         val normalized = " " + text.lowercase().replace(nonWord, " ").trim() + " "
         latestCandidates = recognitionIndex.asSequence().filter { (_, title) ->
             title.length >= 4 && normalized.contains(" $title ")
         }.take(8).map { it.first }.toList()
         val heldIds = candidateLatch.observe(latestCandidates.map { it.id }, android.os.SystemClock.elapsedRealtime())
         val byId = cards.value.associateBy { it.id }
-        suggestions.value = heldIds.mapNotNull { byId[it] }
+        val held = heldIds.mapNotNull { byId[it] }
+        if (held.map { it.id } != suggestions.value.map { it.id }) remote.newPresentation()
+        suggestions.value = held
         waitingForRemoval.value = candidateLatch.waitingForRemoval
     }
     fun nextCard() {
+        remote.newPresentation()
         lastPile.value = null
         candidateLatch.next(); suggestions.value = emptyList(); latestCandidates = emptyList(); waitingForRemoval.value = false
     }
@@ -146,13 +159,15 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
         liveGrouping.value = grouping
         preferences.edit().putString("liveGrouping", grouping).apply()
     }
-    fun startFreshPiles() = work {
-        val version = cards.value.firstOrNull()?.version ?: error("Download a reference catalog first")
+    fun startFreshPiles() = work { startFreshPilesNow() }
+    internal suspend fun startFreshPilesNow() {
+        val version = store.cards().first().firstOrNull()?.version ?: error("Download a reference catalog first")
         store.newLiveRun(capacity.value, liveGrouping.value, version)
         lastPile.value = null
         message.value = "Fresh live map started. Use the cleared table; prior maps and ownership are retained."
     }
-    fun adjustQuantity(card: CatalogCard, delta: Int, event: String = UUID.randomUUID().toString()) = work {
+    fun adjustQuantity(card: CatalogCard, delta: Int, event: String = UUID.randomUUID().toString()) = work { adjustQuantityNow(card, delta, event) }
+    internal suspend fun adjustQuantityNow(card: CatalogCard, delta: Int, event: String = UUID.randomUUID().toString()) {
         if (store.adjustQuantity(card, delta, event, sessionId)) {
             val count = store.quantity(card.id)
             message.value = "${card.title}: $count owned. Quantity edits do not place a physical card in a pile."
@@ -162,30 +177,41 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     fun queuePresentation() = work {
         val id = UUID.randomUUID().toString()
         val candidates = JSONArray(latestCandidates.map { it.id }).toString()
-        val pass = passes.value.firstOrNull { it.status == "active" }?.id
+        val pass = store.passes().first().firstOrNull { it.status == "active" }?.id
         store.addException(ExceptionRecord(id, sessionId, System.currentTimeMillis(), "UNVALIDATED_OCR", candidates, passId = pass))
         message.value = "Re-sort · OCR is experimental; ownership unchanged"
         if (!silent.value) cues.tryEmit("Re-sort")
     }
-    fun confirm(card: CatalogCard, event: String, exceptionId: String? = null) = work {
+    fun confirm(card: CatalogCard, event: String, exceptionId: String? = null, expectedPresentation: String? = null) = work {
+        require(expectedPresentation == null || expectedPresentation == remote.presentation) { "This selection is stale. Review the current card before confirming." }
+        confirmNow(card, event, exceptionId)
+    }
+    internal suspend fun confirmNow(card: CatalogCard, event: String, exceptionId: String? = null) {
         require(mode.value != Mode.RESORT_EXISTING) { "Re-sort mode cannot create owned copies" }
         val placement = store.confirmAndPlace(card, event, sessionId, capacity.value, liveGrouping.value, exceptionId)
-        if (placement?.added == true) {
+        require(placement != null) { "Attempt already resolved; review the current physical card." }
+        if (placement.added) {
             val mixed = placement.group.pile == placement.run.capacity - 1
             val destination = if (mixed) "mixed groups · split this pile later" else placement.group.label
             lastPile.value = "Pile ${placement.group.pile} · $destination"
             message.value = "${card.title} added. Place it in Pile ${placement.group.pile} — $destination."
+            remote.newPresentation()
             candidateLatch.consume(setOf(card.id)); suggestions.value = emptyList(); waitingForRemoval.value = true
             if (!silent.value) cues.tryEmit("Pile ${placement.group.pile}")
         }
     }
 
     fun dismiss(id: String, decision: String) = work { store.dismiss(id, decision); message.value = "Decision saved · ownership unchanged" }
-    fun undo(id: String) = work { store.undo(id); message.value = "Copy removed · audit record retained" }
+    fun undo(id: String) = work { require(store.activePasses() == 0) { "Finish or abandon the active re-sort pass before undoing inventory" }; store.undo(id); message.value = "Copy removed · audit record retained" }
 
-    fun makePlan(source: String = "inventoried collection", parent: SavedPass? = null, pile: Int? = null, liveSource: Pair<String, Int>? = null) = work {
-        val sourceIds = liveSource?.let { (runId, number) -> livePlacements.value.filter { it.runId == runId && it.pile == number }.map { it.copyId }.toSet() }
-        val active = copies.value.filter { it.status == "active" && (sourceIds == null || it.id in sourceIds) }
+    fun makePlan(source: String = "inventoried collection", parent: SavedPass? = null, pile: Int? = null, liveSource: Pair<String, Int>? = null) = work { makePlanNow(source, parent, pile, liveSource) }
+    internal suspend fun makePlanNow(source: String = "inventoried collection", parent: SavedPass? = null, pile: Int? = null, liveSource: Pair<String, Int>? = null) {
+        val currentCopies = store.copies().first()
+        val currentPlacements = store.livePlacements().first()
+        val currentPasses = store.passes().first()
+        val currentRoutes = store.routes().first()
+        val sourceIds = liveSource?.let { (runId, number) -> currentPlacements.filter { it.runId == runId && it.pile == number }.map { it.copyId }.toSet() }
+        val active = currentCopies.filter { it.status == "active" && (sourceIds == null || it.id in sourceIds) }
         require(active.isNotEmpty()) { "Confirm physical copies before planning a sorting pass" }
         val sourceCounts: Map<String, Int>
         val cardPacks: Map<String, String>
@@ -194,7 +220,7 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
             val old = JSONObject(parent.json)
             val oldCounts = old.getJSONObject("sourceCounts")
             val oldPacks = old.getJSONObject("cardPacks")
-            val allRouted = routes.value.filter { it.passId == parent.id }.groupingBy { it.cardId }.eachCount()
+            val allRouted = currentRoutes.filter { it.passId == parent.id }.groupingBy { it.cardId }.eachCount()
             require(oldCounts.keys().asSequence().all { allRouted[it] == oldCounts.getInt(it) }) { "Finish or reconcile the entire source pass before subdividing" }
             val oldPile = old.getJSONArray("piles").let { arr -> (0 until arr.length()).map { arr.getJSONObject(it) }.single { it.getInt("number") == pile } }
             val destinations = oldPile.getJSONArray("destinations").let { arr -> (0 until arr.length()).map { arr.getJSONObject(it).getString("id") }.toSet() }
@@ -204,16 +230,16 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
             sourceCounts = active.groupingBy { it.cardId }.eachCount()
             cardPacks = active.associate { it.cardId to it.pack }
         }
-        require(passes.value.none { it.status == "active" && it.id != parent?.id }) { "Finish the active pass first; its map is immutable" }
+        require(currentPasses.none { it.status == "active" && it.id != parent?.id }) { "Finish the active pass first; its map is immutable" }
         val ds = sourceCounts.entries.groupBy { cardPacks.getValue(it.key) }.map { (pack, counts) ->
             Destination(pack, active.firstOrNull { it.pack == pack }?.packName ?: pack, counts.sumOf { it.value })
         }
-        if (parent != null && pile != null) require(passes.value.none {
+        if (parent != null && pile != null) require(currentPasses.none {
             val previous = JSONObject(it.json)
             previous.optString("parentId") == parent.id && previous.optInt("sourcePile", -1) == pile
         }) { "This source pile already has a saved child pass. Resume it instead." }
         val plan = PilePlanner.plan(ds, capacity.value, source, parent?.id ?: "root")
-        if (liveSource != null) require(passes.value.none {
+        if (liveSource != null) require(currentPasses.none {
             val previous = JSONObject(it.json)
             it.status != "abandoned" && previous.optString("liveRunId") == liveSource.first && previous.optInt("livePile", -1) == liveSource.second
         }) { "This source pile already has a saved re-sort pass" }
@@ -225,21 +251,28 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
             })) }))
         store.beginPass(SavedPass(UUID.randomUUID().toString(), json.toString(), System.currentTimeMillis()), parent?.id)
         mode.value = Mode.RESORT_EXISTING
+        remote.newPresentation()
         lastPile.value = null
         message.value = "Sorting pass frozen. Catalog packs are provisional destinations, not verified retail products."
     }
-    fun abandonPass(pass: SavedPass) = work {
+    fun abandonPass(pass: SavedPass) = work { abandonPassNow(pass) }
+    internal suspend fun abandonPassNow(pass: SavedPass) {
         store.abandonPass(pass.id)
         message.value = "Pass abandoned; records retained. Reconcile physical source piles before planning again. Ownership unchanged."
     }
-    fun finishPass(pass: SavedPass) = work {
+    fun finishPass(pass: SavedPass) = work { finishPassNow(pass) }
+    internal suspend fun finishPassNow(pass: SavedPass) {
         val counts = JSONObject(pass.json).getJSONObject("sourceCounts")
-        val actual = routes.value.filter { it.passId == pass.id }.groupingBy { it.cardId }.eachCount()
+        val actual = store.routes().first().filter { it.passId == pass.id }.groupingBy { it.cardId }.eachCount()
         require(counts.keys().asSequence().all { (actual[it] ?: 0) == counts.getInt(it) }) { "Source count mismatch. Reconcile physical cards before completion." }
         store.completePass(pass.id); message.value = "Pass complete · ownership unchanged"
     }
-    fun route(cardId: String, event: String) = work {
-        val pass = passes.value.firstOrNull { it.status == "active" } ?: error("Create a sorting pass first")
+    fun route(cardId: String, event: String, expectedPresentation: String? = null) = work {
+        require(expectedPresentation == null || expectedPresentation == remote.presentation) { "This selection is stale. Review the current card." }
+        routeNow(cardId, event)
+    }
+    internal suspend fun routeNow(cardId: String, event: String) {
+        val pass = store.passes().first().firstOrNull { it.status == "active" } ?: error("Create a sorting pass first")
         val json = JSONObject(pass.json)
         val pack = json.getJSONObject("cardPacks").optString(cardId)
         val piles = json.getJSONArray("piles")
@@ -248,6 +281,8 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
             (0 until ds.length()).any { ds.getJSONObject(it).getString("id") == pack }
         }?.getInt("number") ?: error("Card is outside this source pile")
         if (store.route(RouteRecord(event, pass.id, cardId, pile, System.currentTimeMillis()))) {
+            remote.newPresentation()
+            candidateLatch.consume(setOf(cardId)); suggestions.value = emptyList(); waitingForRemoval.value = true
             lastPile.value = "Pile $pile · existing copy routed"
             message.value = "Pile $pile · existing copy routed; ownership unchanged"
             if (!silent.value) cues.tryEmit("Pile $pile")
@@ -256,6 +291,7 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     suspend fun exportJson(): String {
         return JSONObject().put("schemaVersion", 1).put("exportedAt", System.currentTimeMillis())
             .put("catalogSource", cards.value.firstOrNull()?.source ?: JSONObject.NULL)
+            .put("remoteCommands", jsonArray(store.allRemoteCommands().map { JSONObject().put("id",it.id).put("requestHash",it.requestHash).put("result",JSONObject(it.result)).put("at",it.at) }))
             .put("copies", jsonArray(copies.value.map { it.toJson() }))
             .put("bulkInventory", JSONObject().put("cutoff", bulkInventory.value.cutoff).put("revision", bulkInventory.value.revision).put("finishedAt", bulkInventory.value.finishedAt ?: JSONObject.NULL).put("finishedRevision", bulkInventory.value.finishedRevision))
             .put("referencePacks", jsonArray(referencePacks.value.map { p -> JSONObject().put("id", p.id).put("title", p.title).put("familyId", p.familyId).put("familyName", p.familyName).put("released", p.released).put("members", JSONArray(p.members)).put("reprintType", p.reprintType).put("source", p.source).put("version", p.version) }))
@@ -280,5 +316,6 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
             listOf(it.first().cardId, it.first().title, it.first().packName, it.size.toString(), "unverified").joinToString(",", transform = ::q)
         }
     }
+    override fun onCleared() { remote.stopServer(); super.onCleared() }
     // The Application owns Room; rotation and ViewModel teardown must not close it.
 }

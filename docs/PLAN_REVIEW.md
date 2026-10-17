@@ -104,5 +104,23 @@ A phone-hosted browser interface is the preferred next feature for mounted-phone
 scanning. The Windows/Ubuntu listener remains an alternative deployment. Both
 keep the phone as the inventory authority and reuse existing confirmation and
 sorting safeguards. See [the project agenda](ROADMAP.md) for scope, delivery steps,
-network/session concerns and acceptance checks. This is a planned addition, not
-an implemented capability of 0.4.0.
+network/session concerns and acceptance checks. The phone-hosted workflow is implemented in 0.5.0; see the
+[remote desk guide](REMOTE.md). The relay and full backup restore remain future work.
+
+
+## v0.5 remote session implementation
+
+Packaged browser assets and an opt-in local HTTP listener reuse the phone's
+inventory transactions and source-pile safeguards. A schema-4 command journal
+commits mutation outcomes with their changes; stale presentation/revision checks
+protect native and browser interactions. Browser controls include camera lifecycle,
+selection/confirmation, quantity/undo, attempt review, routing/pile planning,
+source progress, CSV/audit downloads and bounded subsystem recovery. Capture is
+owned by the foreground Activity independently of the native lazy-list preview.
+
+The server is disabled by default. Pairing has revocable credentials, literal-IP
+Host and same-origin validation, request bounds and a bounded worker pool. Live
+SSE snapshots coalesce updates and resynchronize after reconnect; no camera frames
+or queued automatic confirmations cross the connection. Long metadata downloads
+do not hold the inventory-command lock. Separate product/source verification and
+physical camera validation gates remain open.

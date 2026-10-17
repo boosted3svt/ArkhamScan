@@ -53,8 +53,15 @@ data class BulkInventory(@PrimaryKey val id: Int = 1, val cutoff: String = "", v
     val finishedAt: Long? = null, val finishedRevision: Long = -1)
 data class CatalogSnapshot(val cards: List<CatalogCard>, val packs: List<ReferencePack>)
 
+@Entity(tableName = "remote_commands")
+data class RemoteCommand(@PrimaryKey val id: String, val requestHash: String, val result: String, val at: Long)
+
 @Dao
 abstract class Store {
+    @Query("SELECT * FROM remote_commands WHERE id=:id") abstract suspend fun remoteCommand(id: String): RemoteCommand?
+    @Query("SELECT * FROM remote_commands ORDER BY at") abstract suspend fun allRemoteCommands(): List<RemoteCommand>
+    @Insert abstract suspend fun saveRemoteCommand(record: RemoteCommand)
+
     @Query("SELECT * FROM reference_packs ORDER BY title") abstract fun referencePacks(): Flow<List<ReferencePack>>
     @Query("SELECT * FROM bulk_inventory WHERE id=1") abstract fun bulkInventory(): Flow<BulkInventory?>
     @Query("SELECT * FROM bulk_inventory WHERE id=1") abstract suspend fun currentBulkInventory(): BulkInventory?
@@ -232,7 +239,7 @@ abstract class Store {
 }
 
 @Database(entities = [CatalogCard::class, CopyRecord::class, ExceptionRecord::class, AuditRecord::class,
-    SessionRecord::class, SavedPass::class, RouteRecord::class, LiveRun::class, LivePileGroup::class, LivePlacement::class, ReferencePack::class, BulkInventory::class], version = 3, exportSchema = true)
+    SessionRecord::class, SavedPass::class, RouteRecord::class, LiveRun::class, LivePileGroup::class, LivePlacement::class, ReferencePack::class, BulkInventory::class, RemoteCommand::class], version = 4, exportSchema = true)
 abstract class ScanDatabase : RoomDatabase() {
     abstract fun store(): Store
     companion object {
@@ -255,7 +262,12 @@ abstract class ScanDatabase : RoomDatabase() {
                 db.execSQL("INSERT OR IGNORE INTO bulk_inventory VALUES(1, '', 0, NULL, -1)")
             }
         }
-        fun open(context: Context) = Room.databaseBuilder(context, ScanDatabase::class.java, "arkhamscan.db").addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS remote_commands (id TEXT NOT NULL, requestHash TEXT NOT NULL, result TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY(id))")
+            }
+        }
+        fun open(context: Context) = Room.databaseBuilder(context, ScanDatabase::class.java, "arkhamscan.db").addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build()
     }
 }
 

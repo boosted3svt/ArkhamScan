@@ -7,7 +7,7 @@ validation has not yet been performed.
 
 ## Download the Android alpha
 
-[Download ArkhamScan 0.4.0 alpha (debug APK)](https://github.com/boosted3svt/ArkhamScan/raw/refs/heads/main/downloads/ArkhamScan-0.4.0-alpha-debug.apk)
+[Download ArkhamScan 0.5.0 alpha (debug APK)](https://github.com/boosted3svt/ArkhamScan/raw/refs/heads/main/downloads/ArkhamScan-0.5.0-alpha-debug.apk)
 
 Transfer the APK to your phone and open it to install. Android may ask you to allow
 installation from the browser or file manager you selected. This is a development
@@ -18,6 +18,9 @@ The APK's SHA-256 is recorded in [downloads/SHA256SUMS](downloads/SHA256SUMS).
 
 ## What works
 
+- Run an opt-in local HTTP browser desk: start/stop capture remotely, review and
+  confirm matches, correct counts, inspect piles/progress, resolve attempts and
+  recover from errors. Camera processing and inventory stay on the phone.
 - Download card/pack metadata directly from ArkhamDB (including encounter cards),
   then search it offline. No file preparation is required. Local import is optional.
 - Open a card’s live ArkhamDB page in your browser to inspect the reference artwork
@@ -52,12 +55,16 @@ unverified. Original-box provenance, scenario dependency readiness, backup resto
 and reference imagery are not implemented. JSON is an audit export, not a restorable backup. See
 [plan review](docs/PLAN_REVIEW.md) and [source register](docs/SOURCES.md).
 
-## Project agenda
+## Remote browser interface
 
-The next proposed feature is an opt-in phone-hosted web interface for controlling
-a mounted scanner from a desktop browser. Camera processing and collection storage
-stay on the phone. See the [agenda and implementation considerations](docs/ROADMAP.md).
-This is planned and is not included in the current APK.
+Mount the phone, grant camera permission, and enable **Run web server** on Overview
+or Settings. Open the displayed `http://IP:port` from a computer on the same network,
+enter the pairing code, and click **Start scanning** in the browser. Leave the
+phone app open and unlocked. Corrections and confirmation update its database.
+See the [remote desk guide](docs/REMOTE.md) for controls and connection recovery.
+
+The [project agenda](docs/ROADMAP.md) tracks the remaining relay, backup and device
+validation work.
 
 ## Build
 
@@ -80,8 +87,8 @@ The existing checkouts are already isolated; do not create Git worktrees for set
 
 ## Get started with ArkhamDB
 
-1. Install the **0.4.0 alpha** APK above over the previous alpha. It uses the same
-   development signing key and migrates schemas 1 or 2 to schema 3 without clearing your
+1. Install the **0.5.0 alpha** APK above over the previous alpha. It uses the same
+   development signing key and migrates schemas 1, 2 or 3 to schema 4 without clearing your
    cards, copies, corrections, pending attempts, or saved pile placements.
 2. With internet available, open **Overview** and tap **Download from ArkhamDB**.
    The app fetches ArkhamDB’s public packs and cards APIs, with encounter cards
@@ -203,7 +210,9 @@ mismatched pass without changing ownership and physically reconcile its piles.
 
 ## Privacy and architecture
 
-The APK uses internet for optional ArkhamDB metadata refresh. Card reference pages
+The APK uses internet for optional ArkhamDB metadata refresh and an opt-in local
+HTTP remote desk. The desk sends metadata and accepts authenticated commands;
+camera frames stay on the phone. Card reference pages
 open in the user’s browser. Camera recognition stays on-device; frames stay in
 CameraX/ML Kit memory and are
 closed after OCR; no capture, crop, screenshot, thumbnail, or video write path is
@@ -214,10 +223,10 @@ capture. Exports use Android's user-selected document picker.
 
 - `core/`: platform-free routing policy, presentation gate, retail model,
   verified-only completeness, planner/simulator, and source-count ledger.
-- `app/`: Compose screens, bundled OCR analyzer, Room database (schema v3),
+- `app/`: Compose screens, bundled OCR analyzer, Room database (schema v4),
   transactional decisions, audio, public ArkhamDB metadata download, optional local
   catalog import, browser reference links, and exports.
-- `app/schemas/`: exported Room schemas 1, 2 and 3. Real version-1 and version-2 database
+- `app/schemas/`: exported Room schemas 1, 2, 3 and 4. Real version-1, version-2 and version-3 database
   fixtures are migrated and checked for retained inventory, attempts and live piles.
 - Tests: JVM domain tests and Robolectric tests exercising real Room transactions,
   persistence/reopen, catalog replacement, sorting, and import validation.

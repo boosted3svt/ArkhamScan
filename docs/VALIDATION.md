@@ -1,19 +1,53 @@
-# Validation — 0.4.0 alpha (2026-10-17)
+# Validation — 0.5.0 alpha (2026-10-17)
 
 | Check | Result |
 | --- | --- |
 | Domain tests | 18 passed |
-| Android / Room / API-parser / UI tests | 43 passed (including optional live-source audit) |
+| Android / Room / API-parser / UI tests | 50 passed (including optional live-source audit) |
+| Actual HTTP + desktop Chromium workflow | 1 passed separately |
 | Python catalog converter | 2 passed |
 | Debug / unsigned release APK builds | Passed |
 | Debug lint / release vital lint | Passed with warnings, no errors |
-| Debug APK signature | Verified; same signer as 0.1, 0.2 and 0.3 for in-place updates |
-| Database upgrade | Real schema-1 and schema-2 databases migrated to schema 3; inventory, attempts and live pile assignments retained |
+| Debug APK signature | Verified; same signer as 0.1, 0.2, 0.3 and 0.4 for in-place updates |
+| Database upgrade | Real schemas 1, 2 and 3 migrated to schema 4; inventory, review state, attempts and pile assignments retained |
 
-Total: 63 automated tests passed, no failed/skipped/error cases.
+Total: 71 automated tests passed, no failed/skipped/error cases.
 Executed with JDK 21, Gradle 8.13, SDK 35/build tools 35.0.0:
 `./gradlew :core:test :app:testDebugUnitTest :app:assembleDebug :app:assembleRelease :app:lintDebug -PliveReferenceDir=/tmp`
 and `python3 -m unittest discover -s tools/tests -v`.
+The separate actual-browser integration used `bash tools/test-remote-browser.sh`
+with installed desktop Chromium and Playwright.
+
+## Phone-hosted remote desk
+
+The actual HTTP listener test verifies public packaged assets, pairing, rejected
+foreign Origins and nonliteral Hosts, unauthorized access, exclusive controller
+pairing, SSE under a browser-style Accept-Encoding header, confirmation retries,
+and credential/code rotation on revocation. No CORS relaxation or global Android
+cleartext-policy change is required.
+
+Command tests verify exactly-one ownership across replay/new coordinators, stale
+presentation and collection-revision rejection, no acknowledgment on rejected
+mutations, active re-sort restrictions, ownership-neutral routing, camera blockers,
+and browser visibility/editing of historical cards absent from a new catalog.
+The real schema-3 upgrade test verifies review/inventory preservation, rollback of
+both a quantity change and its command outcome, and successful outcome persistence
+across a file-backed Room close/reopen.
+
+A separate Chromium test connects to the actual Robolectric phone HTTP service.
+It verifies incorrect/correct pairing, a simulated OCR observation arriving via
+live SSE without a refresh, search and match selection, then deliberately drops
+the HTTP response after a real confirmation commits. The browser resolves that
+saved result without creating a second copy. It also exercises +/- corrections,
+pile contents, reference-group details, permission-error reporting and diagnostic
+downloads with no pairing secret. A real browser check caught gzip buffering of
+small SSE events; SSE compression is now disabled and this case is covered.
+
+Synthetic cards are test-only. These checks do not measure physical camera focus,
+recognition quality, Wi-Fi performance or long-session thermal behavior on the
+user's phone. The browser can request capture, but Android still controls camera
+permission, foreground access and process lifetime. Backup restore, extra read-only
+viewers and the Windows/Ubuntu relay are not implemented.
 
 ## Bulk collection discovery
 
@@ -75,7 +109,7 @@ mathematically optimal online assignment is claimed.
 
 ## Persistence and migration
 
-Schemas 1, 2 and 3 are exported in app/schemas. The migration test constructs the old
+Schemas 1, 2, 3 and 4 are exported in app/schemas. The migration test constructs the old
 database from its actual exported schema, adds representative card/copy/exception
 records, opens it with the new Room database and validates retained contents.
 Room's own schema validation checks the upgraded tables. There is no destructive
@@ -100,5 +134,6 @@ catalog client. Camera frames are not retained to hold suggestions.
 - `downloads/ArkhamScan-0.1.0-alpha-debug.apk`: SHA-256 `b575d8e915c586957c65f09984659f0be8907c73d192d22f2bdbebba8cce5b75`
 - `downloads/ArkhamScan-0.2.0-alpha-debug.apk`: SHA-256 `0b54f5566590debc1f3850e9f6c215a4402a9d7dcefdc4e185b4664b466008a0`
 - `downloads/ArkhamScan-0.3.0-alpha-debug.apk`: SHA-256 `aa2d1ccd90c6ac6837498f2a5aae233ed4d1b483eddf54f90162879f1f5c371e`
-
 - `downloads/ArkhamScan-0.4.0-alpha-debug.apk`: SHA-256 `81fc9d5839abf74d9d547358030439ee325c620a4e0aa66c738ffb9e528d45d7`
+
+- `downloads/ArkhamScan-0.5.0-alpha-debug.apk`: SHA-256 `8ad7367aa60688a15bd757af1e7a7db6b63a1d07726d0cad7348165d856e7df6`

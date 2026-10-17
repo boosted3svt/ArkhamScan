@@ -1,8 +1,11 @@
 # Project agenda
 
-## Next proposed feature: remote browser control
+## Remote browser control
 
-Status: planned; no web server or remote control is implemented in 0.4.0.
+Status: phone-hosted HTTP control implemented in 0.5.0 alpha. See the
+[remote desk guide](REMOTE.md). The sections below retain the design agenda;
+Windows/Ubuntu relay, extra read-only viewers, QR pairing, restorable backups
+and physical-device validation remain open.
 
 The phone sits in a mount facing the table. Camera capture and OCR stay on the
 phone. A browser on another machine handles candidate selection, reference-page
@@ -13,7 +16,7 @@ not automatic recognition acceptance.
 ### Preferred deployment: phone-hosted web interface
 
 Add an explicit **Run web server** toggle. Show the local network address and
-port using local HTTP, a pairing link/QR code, connected clients, and a clear
+port using local HTTP, a pairing code, connected clients, and a clear
 Stop/revoke control. HTTPS/certificate provisioning is not a prerequisite for
 this private-LAN workflow, per the requested deployment.
 The desktop browser connects directly to the phone; no Windows/Ubuntu software,
@@ -40,7 +43,7 @@ reconnection and server maintenance work. It is not required for the first relea
 ### Implementation requirements
 
 - Serve packaged frontend assets from the phone, with a small authenticated API
-  and an ordered event stream (WebSocket, or SSE plus command requests). Initial
+  and an ordered SSE stream plus command requests. Initial
   connection and reconnection obtain an authoritative snapshot and revision;
   events update that view. Paginate the full catalog and collection instead of
   sending every card on every OCR frame.

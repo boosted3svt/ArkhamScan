@@ -42,6 +42,8 @@ import java.util.UUID
 class MainActivity : ComponentActivity() {
     // Bind the factory to this Application rather than the process-wide cached factory.
     private val vm: ScanViewModel by viewModels { androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory(application) }
+    override fun onResume() { super.onResume(); vm.remote.setForeground(true) }
+    override fun onPause() { vm.remote.setForeground(false); super.onPause() }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
@@ -113,6 +115,7 @@ private val tabs = listOf("Overview", "Scan", "Collection", "Re-sort", "Piles", 
     var search by remember { mutableStateOf("") }
     var selected by remember { mutableStateOf<CatalogCard?>(null) }
     var exceptionId by remember { mutableStateOf<String?>(null) }
+    var chosenPresentation by remember { mutableStateOf("") }
     var eventId by remember { mutableStateOf("") }
     var resetLiveMap by remember { mutableStateOf(false) }
     var undoCopy by remember { mutableStateOf<CopyRecord?>(null) }
@@ -140,14 +143,24 @@ private val tabs = listOf("Overview", "Scan", "Collection", "Re-sort", "Piles", 
             vm.message.value = "Reference progress CSV saved; overlapping scope totals must not be added together."
         } catch(e: Exception) { vm.message.value = "Export failed: ${e.message}" } }
     }
-    fun choose(card: CatalogCard, queue: String? = null) { selected = card; exceptionId = queue; eventId = UUID.randomUUID().toString() }
+    fun choose(card: CatalogCard, queue: String? = null) { selected = card; chosenPresentation = vm.remote.presentation; exceptionId = queue; eventId = UUID.randomUUID().toString() }
     val listState = rememberLazyListState()
     LaunchedEffect(tab, showDiscovery, discoveryUi.selected) { listState.scrollToItem(0) }
+    val remoteEnabled by vm.remote.enabled.collectAsStateWithLifecycle()
+    val cameraRequest by vm.remote.cameraRequest.collectAsStateWithLifecycle()
+    val previewView = remember(context) { androidx.camera.view.PreviewView(context).apply { scaleType = androidx.camera.view.PreviewView.ScaleType.FIT_CENTER } }
+    CaptureEngine(vm, previewView)
+    LaunchedEffect(tab, remoteEnabled) { if (tab != 1 && !remoteEnabled) vm.remote.camera("stop") }
+    DisposableEffect(remoteEnabled, cameraRequest) {
+        val activity = context as? android.app.Activity
+        if (remoteEnabled || cameraRequest == "running") activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        onDispose { activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
+    }
     AudioFeedback(vm)
     Scaffold(topBar = {
         TopAppBar(title = { Column { Text("ARKHAMSCAN", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Text("THE COLLECTION DESK", style = MaterialTheme.typography.labelSmall, color = Gold) } },
-            actions = { Text("ALPHA 04", modifier = Modifier.padding(end = 16.dp), style = MaterialTheme.typography.labelSmall, color = Gold) })
+            actions = { Text("ALPHA 05", modifier = Modifier.padding(end = 16.dp), style = MaterialTheme.typography.labelSmall, color = Gold) })
     }, bottomBar = {
         NavigationBar {
             val icons = listOf(Icons.Outlined.Dashboard, Icons.Outlined.CameraAlt, Icons.Outlined.Style,
@@ -161,6 +174,7 @@ private val tabs = listOf("Overview", "Scan", "Collection", "Re-sort", "Piles", 
             item { Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(12.dp)) {
                 Text(message, Modifier.padding(14.dp), style = MaterialTheme.typography.bodyMedium)
             } }
+            if (tab == 0 || tab == 5 || remoteEnabled) item { RemoteControls(vm) }
             when (tab) {
                 0 -> {
                     item { Text("Put your collection in order.", style = MaterialTheme.typography.titleLarge)
@@ -190,7 +204,7 @@ private val tabs = listOf("Overview", "Scan", "Collection", "Re-sort", "Piles", 
                             }
                         }
                     }
-                    item { CameraPanel(vm, mode) }
+                    item { CameraPanel(vm, mode, previewView) }
                     item { val suggested by vm.suggestions.collectAsStateWithLifecycle()
                         lastPile?.let { Text("Last confirmed placement", style = MaterialTheme.typography.labelSmall); Text(it, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Gold) }
                         Text("Held camera suggestions", style = MaterialTheme.typography.titleMedium)
@@ -365,7 +379,7 @@ private val tabs = listOf("Overview", "Scan", "Collection", "Re-sort", "Piles", 
                 Text("Check the printing when identifiable. Source-declared equivalent printings also count in content reports.", style = MaterialTheme.typography.bodySmall)
                 ArkhamDbCatalog.cardPage(card)?.let { page -> TextButton(onClick = { openPage(context, page, vm) }) { Text("View card on ArkhamDB") } }
             } }, confirmButton = { TextButton(onClick = {
-                if (mode == Mode.RESORT_EXISTING) vm.route(card.id, eventId) else vm.confirm(card, eventId, exceptionId)
+                if (mode == Mode.RESORT_EXISTING) vm.route(card.id, eventId, chosenPresentation) else vm.confirm(card, eventId, exceptionId, chosenPresentation)
                 selected = null
             }) { Text(if (mode == Mode.RESORT_EXISTING) "Route existing copy" else "New physical copy") } },
             dismissButton = { TextButton(onClick = { exceptionId?.let { vm.dismiss(it, "already_counted") }; selected = null }) { Text(if (exceptionId != null) "Already counted" else "Cancel") } })

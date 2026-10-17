@@ -11,8 +11,8 @@ android {
         applicationId = "com.arkhamscan"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.4.0-alpha"
+        versionCode = 5
+        versionName = "0.5.0-alpha"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true }
@@ -25,6 +25,7 @@ android {
 kotlin { jvmToolchain(21) }
 dependencies {
     implementation(project(":core"))
+    implementation("org.nanohttpd:nanohttpd:2.3.1")
     implementation(platform("androidx.compose:compose-bom:2025.04.01"))
     implementation("androidx.activity:activity-compose:1.10.1")
     implementation("androidx.compose.material3:material3")
@@ -67,4 +68,11 @@ tasks.withType<Test>().configureEach {
     val liveDir = providers.gradleProperty("liveReferenceDir").orNull
     if (liveDir == null) exclude("**/LiveReferenceAuditTest.class")
     else systemProperty("arkhamscan.liveReferenceDir", liveDir)
+}
+
+// Optional end-to-end browser run against the actual in-process phone HTTP service.
+tasks.withType<Test>().configureEach {
+    val harness = providers.gradleProperty("browserHarnessDir").orNull
+    if (harness == null) exclude("**/RemoteBrowserHarnessTest.class")
+    else systemProperty("arkhamscan.browserHarnessDir", harness)
 }
