@@ -96,3 +96,13 @@ Progress and outstanding CSV complement the existing collection and audit export
 Still pending: independently verified physical manifests, scenario dependency
 readiness, restoreable backups, and physical-device recognition validation. The
 new encounter view is content coverage rather than a ready-to-play assertion.
+
+
+## Remote interface agenda
+
+A phone-hosted browser interface is the preferred next feature for mounted-phone
+scanning. The Windows/Ubuntu listener remains an alternative deployment. Both
+keep the phone as the inventory authority and reuse existing confirmation and
+sorting safeguards. See [the project agenda](ROADMAP.md) for scope, delivery steps,
+network/session concerns and acceptance checks. This is a planned addition, not
+an implemented capability of 0.4.0.

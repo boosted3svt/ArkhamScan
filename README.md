@@ -52,6 +52,13 @@ unverified. Original-box provenance, scenario dependency readiness, backup resto
 and reference imagery are not implemented. JSON is an audit export, not a restorable backup. See
 [plan review](docs/PLAN_REVIEW.md) and [source register](docs/SOURCES.md).
 
+## Project agenda
+
+The next proposed feature is an opt-in phone-hosted web interface for controlling
+a mounted scanner from a desktop browser. Camera processing and collection storage
+stay on the phone. See the [agenda and implementation considerations](docs/ROADMAP.md).
+This is planned and is not included in the current APK.
+
 ## Build
 
 Install JDK 21, Android SDK platform 35 and build tools 35.0.0. Open this directory
