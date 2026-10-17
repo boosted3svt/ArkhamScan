@@ -13,7 +13,9 @@ not automatic recognition acceptance.
 ### Preferred deployment: phone-hosted web interface
 
 Add an explicit **Run web server** toggle. Show the local network address and
-port, a pairing link/QR code, connected clients, and a clear Stop/revoke control.
+port using local HTTP, a pairing link/QR code, connected clients, and a clear
+Stop/revoke control. HTTPS/certificate provisioning is not a prerequisite for
+this private-LAN workflow, per the requested deployment.
 The desktop browser connects directly to the phone; no Windows/Ubuntu software,
 cloud account, or collection synchronization is required. The phone remains the
 only authority for Room storage, source references, inventory, audit and routing.
@@ -62,18 +64,24 @@ reconnection and server maintenance work. It is not required for the first relea
   against CSRF/cross-site WebSocket requests and DNS rebinding, limit input sizes
   and command rates, and avoid permissive cross-origin access. Do not expose the
   service to the public internet or configure router port forwarding.
-- Decide transport explicitly: plain HTTP on a trusted private LAN is easiest but
-  leaves tokens and data exposed to peers able to observe that traffic. Pairing
-  is not encryption. HTTPS certificate trust on an IP-addressed phone needs a
-  usable provisioning approach; an optional server deployment or secure tunnel
-  can simplify that later. Do not disable Android's global outbound HTTPS policy
-  merely to add an inbound listener.
-- Start camera capture from the visible app after permission and deliberate user
-  action. The initial version requires the scanning screen to remain foreground
-  and awake, preferably with the phone on power. A foreground service alone does
-  not grant unrestricted background/locked-screen camera access on modern
-  Android. Any screen-off/background mode needs separate lifecycle, permission,
-  notification and physical-device validation.
+- Use HTTP and a same-origin browser interface with an unencrypted local event
+  connection (`ws://` if WebSocket is selected). Keep pairing/access controls;
+  TLS and certificate provisioning are outside the initial private-LAN scope.
+  Existing outbound ArkhamDB requests continue using HTTPS.
+- Provide browser **Start scanning**, **Pause**, **Resume**, and **Stop camera**
+  controls. Starting the web server does not automatically start capture. Remote
+  start is an explicit user action routed to the visible phone app's lifecycle
+  coordinator; acknowledge success only once CameraX/OCR is actually ready.
+  Display starting, scanning, paused, camera stopped, blocked and error states.
+  Pause suspends recognition/acceptance; Stop releases camera resources. Neither
+  operation adds ownership or silently confirms/discards a held presentation.
+- Grant Android camera permission on the phone during initial setup. After that,
+  the browser can enable capture while the app is foreground and unlocked; it
+  cannot bypass Android permission prompts, unlock the phone, or guarantee
+  launching a stopped app/background camera. Keep the active remote scanning
+  screen awake. Report permission, lifecycle and camera-in-use blockers with
+  specific instructions when phone-side action is unavoidable. Screen-off or
+  background operation remains a separately validated future feature.
 - Handle Wi-Fi changes, address changes, access-point client isolation, guest
   networks, VPNs and disconnected browsers. Show a reconnecting/stale indicator;
   keep inventory safe if the browser disappears. The native interface remains
@@ -83,13 +91,43 @@ reconnection and server maintenance work. It is not required for the first relea
   and database critical paths. Measure OCR latency, battery use and temperature
   during a long mounted session on the target phone.
 
+### Browser corrections and app recovery
+
+Remote control includes routine troubleshooting, not just accepting card matches:
+
+- Correct candidate selection, search/select another printing, undo an eligible
+  last confirmation, adjust quantities, and review/defer/resolve uncertain scan
+  attempts using the same inventory and sorting rules as the phone UI. Explain
+  any physical pile reconciliation needed after a correction.
+- Show a persistent status/error panel for camera/OCR, catalog connectivity,
+  storage operations, sorting constraints, and remote connection health. Errors
+  need a readable explanation, whether a command committed, and relevant recovery
+  actions rather than an unexplained failure or automatic confirmation retry.
+- Offer bounded recovery commands: retry a failed metadata download, restart the
+  camera/OCR pipeline, resynchronize browser state, retry a known-uncommitted
+  operation, and return to a usable scanning state. Preserve inventory and
+  pending decisions. Pipeline restart invalidates the old presentation ID and
+  explicitly clears its selection without creating a copy; any uncounted physical
+  card must be presented again. An ambiguous commit is resolved by command ID
+  before another mutation is attempted.
+- Provide downloadable diagnostic information with app version, session state,
+  recent errors and command IDs. Omit pairing secrets and camera frames. Avoid
+  adding arbitrary shell commands, database editing or destructive reset controls.
+- Distinguish recoverable subsystem errors from process death: if the app or web
+  listener has stopped, the browser can detect disconnection and give recovery
+  guidance, but cannot repair its unavailable host. Android permission changes,
+  unlocking and relaunching a killed app may require the phone. The native UI
+  remains a fallback, not a requirement for routine remote correction.
+
 ### Proposed delivery sequence
 
 1. Phone-hosted opt-in service, pairing and read-only browser dashboard; visible
    scanning app remains active. Verify network reachability and session lifecycle.
-2. Remote match selection, ArkhamDB links, confirm, next/retry, undo, and immediate
-   pile instructions through the shared transactional command path. Add quantity
-   editing and detailed collection/pile/progress views using existing safeguards.
+2. Remote camera start/pause/resume/stop, match selection, ArkhamDB links, confirm,
+   next/retry, undo and immediate pile instructions through the shared command
+   path. Include quantity editing, uncertain-attempt review, app status/errors,
+   camera/OCR restart, metadata retry and diagnostics. Add detailed collection,
+   pile and progress views using existing safeguards.
 3. Download audit/CSV exports through an authenticated, explicit browser action.
    Add a genuinely restorable, versioned backup with consistent snapshots,
    integrity checks and tested restore as a separate milestone. The current JSON
@@ -101,7 +139,15 @@ reconnection and server maintenance work. It is not required for the first relea
 ### Acceptance checks
 
 Demonstrate a full mounted-phone scan session controlled from desktop browsers
-without phone touches after startup. Verify that duplicate/retried commands add
+without phone touches after server startup and initial permission setup, including
+starting camera capture from the browser. Check that denied permission, locked or
+background app, camera-in-use and failed startup produce accurate browser states.
+Exercise pause/resume/stop and pipeline restart without changing inventory, and
+verify held/stale presentations are handled explicitly. Inject OCR, metadata and
+transaction failures: recovery must preserve ownership, explain commit outcomes
+and keep diagnostics free of credentials/frames. Simulate process death and show
+reconnect/relaunch guidance rather than claiming the browser can restart its dead
+host. Verify that duplicate/retried commands add
 one copy, old presentation IDs cannot confirm a newer card, phone/browser edits
 cannot bypass active sorting restrictions, and two clients cannot race ownership
 changes. Disconnect before and after commits and confirm recovery from the phone's
