@@ -1,0 +1,51 @@
+package com.arkhamscan
+
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.performScrollToNode
+import androidx.lifecycle.ViewModelProvider
+import org.junit.Before
+import org.robolectric.Shadows
+import android.os.Looper
+import androidx.room.Room
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [28], application = UiTestApplication::class)
+class NavigationTest {
+    @get:Rule val compose = createAndroidComposeRule<MainActivity>()
+    @Before fun awaitDatabaseStartup() {
+        lateinit var vm: ScanViewModel
+        compose.runOnIdle { vm = ViewModelProvider(compose.activity)[ScanViewModel::class.java] }
+        try { compose.waitUntil(10_000) {
+            Shadows.shadowOf(Looper.getMainLooper()).idle()
+            vm.databaseReady.value
+        } }
+        catch (e: Throwable) { throw AssertionError("Database startup: ${vm.message.value}", e) }
+    }
+    @Test fun collectionDoesNotClaimUnverifiedCompleteness() {
+        compose.onNodeWithText("Collection").performClick()
+        compose.onNodeWithText("Completeness not yet available").assertIsDisplayed()
+    }
+    @Test fun scanningRequiresDeliberateCameraPermissionAndShowsWorkflow() {
+        compose.onNodeWithText("Scan").performClick()
+        compose.onNodeWithText("Rapid · uncertain cards to Re-sort").assertIsDisplayed()
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("Allow camera"))
+        compose.onNodeWithText("Allow camera").assertIsDisplayed()
+    }
+}
+
+/** UI tests isolate storage; StoreTest separately verifies real file persistence. */
+class UiTestApplication : ScanApplication() {
+    override val database: ScanDatabase by lazy {
+        Room.inMemoryDatabaseBuilder(this, ScanDatabase::class.java).build()
+    }
+}
