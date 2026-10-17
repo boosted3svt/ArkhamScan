@@ -23,8 +23,13 @@ class LiveUiTest {
         compose.runOnIdle { model = ViewModelProvider(compose.activity)[ScanViewModel::class.java] }
         compose.waitUntil(10_000) { Shadows.shadowOf(Looper.getMainLooper()).idle(); model.databaseReady.value }
     }
+    @org.junit.After fun closeDatabase() {
+        compose.runOnIdle { compose.activity.viewModelStore.clear() }
+        (compose.activity.application as ScanApplication).database.close()
+    }
     @Test fun heldSuggestionSurvivesDropoutAndConfirmationShowsPileThenQuantityControlsWork() {
-        compose.waitUntil(10_000) { compose.waitForIdle(); Shadows.shadowOf(Looper.getMainLooper()).idle(); model.cards.value.size == 1 }
+        try { compose.waitUntil(10_000) { compose.waitForIdle(); Shadows.shadowOf(Looper.getMainLooper()).idle(); model.cards.value.size == 1 } }
+        catch (e: Throwable) { throw AssertionError("Live startup: app=${compose.activity.application.javaClass.name}; cards=${model.cards.value}; message=${model.message.value}",e) }
         compose.onNodeWithText("Scan").performClick()
         compose.runOnIdle { model.recognizedText("Synthetic Card") }
         ShadowSystemClock.advanceBy(Duration.ofMillis(300))

@@ -15,6 +15,7 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -39,7 +40,8 @@ import java.util.Locale
 import java.util.UUID
 
 class MainActivity : ComponentActivity() {
-    private val vm: ScanViewModel by viewModels()
+    // Bind the factory to this Application rather than the process-wide cached factory.
+    private val vm: ScanViewModel by viewModels { androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory(application) }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
@@ -84,6 +86,12 @@ private val Gold = Color(0xFFD7BD83)
 private val tabs = listOf("Overview", "Scan", "Collection", "Re-sort", "Piles", "Settings")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun ArkhamApp(vm: ScanViewModel) {
+    val discovery by vm.discovery.collectAsStateWithLifecycle()
+    val bulkInventory by vm.bulkInventory.collectAsStateWithLifecycle()
+    val discoveryUi = remember { DiscoveryUiState() }
+    var showDiscovery by remember { mutableStateOf(false) }
+    var reportScope by remember { mutableStateOf<String?>(null) }
+    var reportOutstanding by remember { mutableStateOf(false) }
     val cards by vm.cards.collectAsStateWithLifecycle()
     val downloading by vm.downloadingCatalog.collectAsStateWithLifecycle()
     val copies by vm.copies.collectAsStateWithLifecycle()
@@ -123,12 +131,23 @@ private val tabs = listOf("Overview", "Scan", "Collection", "Re-sort", "Piles", 
             vm.message.value = "Collection CSV saved"
         } catch (e: Exception) { vm.message.value = "Export failed: ${e.message}" } }
     }
+    val exportDiscovery = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
+        if (uri != null) scope.launch { try {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val data = vm.discoveryCsv(reportScope, reportOutstanding)
+                context.contentResolver.openOutputStream(uri, "wt")?.use { it.write(data.toByteArray()) } ?: error("Cannot open export")
+            }
+            vm.message.value = "Reference progress CSV saved; overlapping scope totals must not be added together."
+        } catch(e: Exception) { vm.message.value = "Export failed: ${e.message}" } }
+    }
     fun choose(card: CatalogCard, queue: String? = null) { selected = card; exceptionId = queue; eventId = UUID.randomUUID().toString() }
+    val listState = rememberLazyListState()
+    LaunchedEffect(tab, showDiscovery, discoveryUi.selected) { listState.scrollToItem(0) }
     AudioFeedback(vm)
     Scaffold(topBar = {
         TopAppBar(title = { Column { Text("ARKHAMSCAN", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Text("THE COLLECTION DESK", style = MaterialTheme.typography.labelSmall, color = Gold) } },
-            actions = { Text("ALPHA 03", modifier = Modifier.padding(end = 16.dp), style = MaterialTheme.typography.labelSmall, color = Gold) })
+            actions = { Text("ALPHA 04", modifier = Modifier.padding(end = 16.dp), style = MaterialTheme.typography.labelSmall, color = Gold) })
     }, bottomBar = {
         NavigationBar {
             val icons = listOf(Icons.Outlined.Dashboard, Icons.Outlined.CameraAlt, Icons.Outlined.Style,
@@ -137,7 +156,7 @@ private val tabs = listOf("Overview", "Scan", "Collection", "Re-sort", "Piles", 
                 icon = { Icon(icons[i], contentDescription = label) }, label = { Text(label, style = MaterialTheme.typography.labelSmall) }) }
         }
     }) { padding ->
-        LazyColumn(modifier = Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             item { Text(tabs[tab], style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.SemiBold) }
             item { Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(12.dp)) {
                 Text(message, Modifier.padding(14.dp), style = MaterialTheme.typography.bodyMedium)
@@ -156,8 +175,10 @@ private val tabs = listOf("Overview", "Scan", "Collection", "Re-sort", "Piles", 
                         TextButton(onClick = { openPage(context, "https://arkhamdb.com", vm) }) { Text("Browse ArkhamDB website") }
                         TextButton(onClick = { importCatalog.launch(arrayOf("application/json", "text/*")) }, enabled = !downloading) { Text("Import a catalog file instead") } }
                     item { Button(onClick = { tab = 1 }, modifier = Modifier.fillMaxWidth(), enabled = cards.isNotEmpty()) { Text("Open scanning desk") } }
+                    item { Button(onClick = { showDiscovery = true; tab = 2; discoveryUi.selected = null }, modifier = Modifier.fillMaxWidth()) { Text("Explore sets & cycles") }
+                        Text("Discover the contents of an unknown bulk collection. No purchase history required.") }
                     item { InfoCard("Honest counts, deliberate decisions", "OCR suggests identities; you confirm physical copies. Repeat presentations and uncertain cards never add ownership automatically. Original retail provenance remains unverified.") }
-                    item { InfoCard("Readiness", "This foundation has not been validated on physical cards or the Galaxy S26 Ultra. Full automatic recognition, verified missing-card reports, reference imagery, and backup restore are pending.") }
+                    item { InfoCard("Readiness", "This foundation has not been validated on physical cards or the Galaxy S26 Ultra. Automatic recognition, independently verified retail manifests, scenario dependency readiness, and backup restore are pending. Source-based discovery reports are available in Collection.") }
                 }
                 1 -> {
                     item {
@@ -183,11 +204,22 @@ private val tabs = listOf("Overview", "Scan", "Collection", "Re-sort", "Piles", 
                     item { if (mode == Mode.RESORT_EXISTING) Text("Select a card to route one already-counted copy through the active pass. No ownership will be created.") }
                 }
                 2 -> {
+                    item { Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        FilterChip(!showDiscovery, onClick = { showDiscovery = false }, label = { Text("Cards & quantities") })
+                        FilterChip(showDiscovery, onClick = { showDiscovery = true }, label = { Text("Sets & cycles") })
+                    } }
+                    if (showDiscovery) {
+                        discoveryItems(vm, discovery, bulkInventory, exceptions.count { it.status in setOf("pending", "deferred") }, discoveryUi) { scopeId, outstanding ->
+                            reportScope = scopeId; reportOutstanding = outstanding
+                            exportDiscovery.launch(if (outstanding) "arkhamscan-outstanding.csv" else "arkhamscan-progress.csv")
+                        }
+                    } else {
+
                     item { Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Button(onClick = { exportCsv.launch("arkhamscan-inventory.csv") }) { Text("Export CSV") }
                         OutlinedButton(onClick = { exportJson.launch("arkhamscan-audit.json") }) { Text("Export JSON") }
                     } }
-                    item { InfoCard("Completeness not yet available", "Reference packs are not verified retail manifests. Unscanned cards mean unknown ownership, not confirmed missing. Identical faces may have multiple retail origins.") }
+                    item { InfoCard("Bulk collection progress", "Open Sets & cycles to compare cumulative ownership with source-listed contents. Percentages remain provisional until retail manifests are independently verified.") }
                     if (passes.any { it.status == "active" }) item { Text("Finish or abandon the active re-sort pass in Piles before editing quantities.", color = Gold) }
                     item { OutlinedTextField(search, { search = it }, label = { Text("Search collection") }, modifier = Modifier.fillMaxWidth()) }
                     if (copies.isEmpty()) item { EmptyState("Your collection starts here", "Download from ArkhamDB on Overview, then use the scanning desk to identify and confirm each physical copy.") }
@@ -196,7 +228,7 @@ private val tabs = listOf("Overview", "Scan", "Collection", "Re-sort", "Piles", 
                         Surface(shape = RoundedCornerShape(12.dp)) { Column(Modifier.padding(16.dp)) {
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(c.title, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold); Text("×${group.count { it.status == "active" }}", color = Gold) }
                             Text("${c.cardId} · ${c.packName}", style = MaterialTheme.typography.bodySmall)
-                            Text("User verified · retail origin unverified", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
+                            Text("User-confirmed physical copies", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 val quantity = group.count { it.status == "active" }
                                 val card = cards.firstOrNull { it.id == c.cardId } ?: CatalogCard(c.cardId, c.title, "", c.pack, c.packName, "", "", c.source, c.catalogVersion)
@@ -206,6 +238,8 @@ private val tabs = listOf("Overview", "Scan", "Collection", "Re-sort", "Piles", 
                             }
                             Text("Quantity edits update ownership only; they do not move cards between physical piles.", style = MaterialTheme.typography.labelSmall)
                         } }
+                    }
+
                     }
                 }
                 3 -> {
@@ -250,6 +284,11 @@ private val tabs = listOf("Overview", "Scan", "Collection", "Re-sort", "Piles", 
                                 val mixed = number == run.capacity - 1
                                 Text("Pile $number · ${if (mixed) "Mixed groups — split later" else members.first().label}", style = MaterialTheme.typography.titleLarge)
                                 Text("$quantity confirmed copies · " + members.joinToString(" · ") { it.label })
+                                TextButton(onClick = {
+                                    showDiscovery = true; tab = 2
+                                    discoveryUi.kind = if (run.grouping == "CYCLE") "CYCLE" else "PACK"
+                                    discoveryUi.selected = members.singleOrNull()?.groupId?.takeIf { id -> discovery.scopes.any { it.id == id } }
+                                }) { Text("View cumulative group progress") }
                                 if ((mixed || run.grouping == "CYCLE") && passes.none { saved -> val source = JSONObject(saved.json); saved.status != "abandoned" && source.optString("liveRunId") == run.id && source.optInt("livePile", -1) == number }) TextButton(onClick = { vm.makePlan(source = "live map ${run.id.take(8)} / Pile $number", liveSource = run.id to number) }, enabled = quantity > 0 && passes.none { it.status == "active" }) { Text("Split Pile $number by reference pack") }
                             }
                             Text("Position ${run.capacity}: Re-sort", color = MaterialTheme.colorScheme.secondary)
@@ -309,7 +348,7 @@ private val tabs = listOf("Overview", "Scan", "Collection", "Re-sort", "Piles", 
                         Button(onClick = { vm.downloadArkhamDb() }, enabled = !downloading) { Text(if (downloading) "Downloading…" else "Refresh from ArkhamDB") }
                         OutlinedButton(onClick = { importCatalog.launch(arrayOf("application/json", "text/*")) }, enabled = !downloading) { Text("Import a catalog file instead") }
                     }
-                    item { InfoCard("Alpha boundaries", "English OCR; one local collection; foreground camera only. Retail manifest verification, reference-image matching, auto-accept calibration, restore, and device benchmarks remain future milestones. Export JSON for an auditable record; it is not yet a restorable backup.") }
+                    item { InfoCard("Alpha boundaries", "English OCR; one local collection; foreground camera only. Independent retail manifest verification, scenario dependencies, reference-image matching, auto-accept calibration, restore, and device benchmarks remain future milestones. Discovery reports use clearly labeled source targets. Export JSON for an auditable record; it is not yet a restorable backup.") }
                 }
             }
             item { Spacer(Modifier.height(12.dp)) }
@@ -321,9 +360,9 @@ private val tabs = listOf("Overview", "Scan", "Collection", "Re-sort", "Piles", 
             text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(card.title, fontWeight = FontWeight.Bold)
                 Text("${card.id} · #${card.number} · ${card.packName}")
-                Text("$count confirmed copies · expected quantity unverified")
+                Text(if (card.expectedQuantity > 0) "$count exact-printing copies · ${card.expectedQuantity} source-listed target" else "$count confirmed copies · copy target not provided")
                 Text(if (mode == Mode.RESORT_EXISTING) "This routes one counted copy through the active source pass. Ownership stays unchanged." else "Select New physical copy only while holding an additional copy you want to count. A repeated presentation alone is not evidence of a new copy.")
-                Text("Retail origin: unverified. No catalog image match performed.", style = MaterialTheme.typography.bodySmall)
+                Text("Check the printing when identifiable. Source-declared equivalent printings also count in content reports.", style = MaterialTheme.typography.bodySmall)
                 ArkhamDbCatalog.cardPage(card)?.let { page -> TextButton(onClick = { openPage(context, page, vm) }) { Text("View card on ArkhamDB") } }
             } }, confirmButton = { TextButton(onClick = {
                 if (mode == Mode.RESORT_EXISTING) vm.route(card.id, eventId) else vm.confirm(card, eventId, exceptionId)

@@ -36,7 +36,7 @@ class MigrationTest {
         insert("copies", mapOf("id" to "copy", "cardId" to "test:a", "title" to "Existing card", "pack" to "p", "packName" to "Existing pack", "catalogVersion" to "v1", "source" to "fixture", "createdAt" to "1", "sessionId" to "s", "method" to "MANUAL_VERIFIED", "status" to "active"))
         insert("exceptions", mapOf("id" to "pending", "sessionId" to "s", "createdAt" to "1", "reason" to "LOW_CONFIDENCE", "candidates" to "[]", "status" to "pending"))
         old.version=1; old.close()
-        val upgraded = Room.databaseBuilder(context, ScanDatabase::class.java, name).addMigrations(ScanDatabase.MIGRATION_1_2).allowMainThreadQueries().build()
+        val upgraded = Room.databaseBuilder(context, ScanDatabase::class.java, name).addMigrations(ScanDatabase.MIGRATION_1_2, ScanDatabase.MIGRATION_2_3).allowMainThreadQueries().build()
         try {
             assertEquals(1, upgraded.store().quantity("test:a"))
             assertEquals("", upgraded.store().cards().first().single().familyId)
@@ -44,4 +44,34 @@ class MigrationTest {
             assertTrue(upgraded.store().liveRuns().first().isEmpty())
         } finally { upgraded.close(); context.deleteDatabase(name) }
     }
+    @Test fun upgradingSchemaTwoRetainsLivePileAssignmentsAndDoesNotInventReferenceQuantities(): Unit = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val name = "migration-live-v2.db"; context.deleteDatabase(name)
+        val schema = javaClass.classLoader!!.getResourceAsStream("com.arkhamscan.ScanDatabase/2.json")!!.use { JSONObject(it.bufferedReader().readText()).getJSONObject("database") }
+        val old = context.openOrCreateDatabase(name, Context.MODE_PRIVATE, null)
+        val entities = schema.getJSONArray("entities")
+        for (i in 0 until entities.length()) {
+            val entity = entities.getJSONObject(i); val table=entity.getString("tableName")
+            old.execSQL(entity.getString("createSql").replace("\${TABLE_NAME}",table))
+            val indices=entity.optJSONArray("indices") ?: org.json.JSONArray()
+            for(j in 0 until indices.length()) old.execSQL(indices.getJSONObject(j).getString("createSql").replace("\${TABLE_NAME}",table))
+        }
+        val setup=schema.getJSONArray("setupQueries")
+        for(i in 0 until setup.length()) old.execSQL(setup.getString(i))
+        old.execSQL("INSERT INTO live_runs VALUES('run',5,'PACK','v1',1,'active')")
+        old.execSQL("INSERT INTO live_groups VALUES('run','pack:p','Existing group',1)")
+        old.execSQL("INSERT INTO live_placements VALUES('existing-copy','run','pack:p',1,1)")
+        old.execSQL("INSERT INTO cards(id,title,number,pack,packName,type,encounter,source,version,familyId,familyName) VALUES('test:a','Existing','1','p','Pack','asset','','fixture','v1','family','Family')")
+        old.version=2;old.close()
+        val upgraded=Room.databaseBuilder(context,ScanDatabase::class.java,name).addMigrations(ScanDatabase.MIGRATION_2_3).allowMainThreadQueries().build()
+        try {
+            assertEquals("run",upgraded.store().activeLiveRun()!!.id)
+            assertEquals("existing-copy",upgraded.store().livePlacements().first().single().copyId)
+            assertEquals(-1,upgraded.store().cards().first().single().expectedQuantity)
+            assertEquals("family",upgraded.store().cards().first().single().familyId)
+            assertEquals("",upgraded.store().currentBulkInventory()!!.cutoff)
+            assertTrue(upgraded.store().referencePacks().first().isEmpty())
+        } finally { upgraded.close();context.deleteDatabase(name) }
+    }
+
 }

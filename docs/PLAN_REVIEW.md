@@ -75,3 +75,24 @@ Starting a re-sort closes the prior live table map. Additional source piles rema
 inspectable in that saved map; previously processed sources cannot accidentally
 start duplicate passes. After re-sorting, new inventory requires an explicit fresh
 map on a cleared table, so old destinations cannot silently resume on reused slots.
+
+
+## v0.4 unknown bulk collection
+
+The active workflow assumes an unsorted bulk lot with no purchase history. No
+owned-product checklist or purchase inference is required. Persistent cumulative
+ownership is compared with a refreshed online reference index by source product,
+logical cycle and encounter set. Progress caps each card at its target, lists
+extras separately and never lets duplicates fill another card's missing copies.
+
+Reference quantities remain provisional. Exact and equivalent printings are shown
+separately, repackage membership with unverified quantities gets design coverage,
+and products lacking records remain visible gaps. There is no overall catalog
+percentage or claim that every known product was purchased. An optional cutoff
+limits reference targets without changing inventory. Finishing all bins changes
+outstanding labels to potentially missing; later relevant edits reopen review.
+Progress and outstanding CSV complement the existing collection and audit exports.
+
+Still pending: independently verified physical manifests, scenario dependency
+readiness, restoreable backups, and physical-device recognition validation. The
+new encounter view is content coverage rather than a ready-to-play assertion.

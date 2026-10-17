@@ -7,7 +7,7 @@ validation has not yet been performed.
 
 ## Download the Android alpha
 
-[Download ArkhamScan 0.3.0 alpha (debug APK)](https://github.com/boosted3svt/ArkhamScan/raw/refs/heads/main/downloads/ArkhamScan-0.3.0-alpha-debug.apk)
+[Download ArkhamScan 0.4.0 alpha (debug APK)](https://github.com/boosted3svt/ArkhamScan/raw/refs/heads/main/downloads/ArkhamScan-0.4.0-alpha-debug.apk)
 
 Transfer the APK to your phone and open it to install. Android may ask you to allow
 installation from the browser or file manager you selected. This is a development
@@ -36,15 +36,20 @@ The APK's SHA-256 is recorded in [downloads/SHA256SUMS](downloads/SHA256SUMS).
   position. Split mixed/cycle piles in later count-preserving passes.
 - Simulate bounded re-sort plans and freeze their source quantities, routing
   existing copies without changing ownership.
-- Export collection CSV and versioned JSON including copy history, attempts, source
+- Track cumulative source-listed progress by box/set, cycle, and encounter set; inspect
+  outstanding cards, extras, exact printings and source-declared equivalents.
+- Optionally limit targets by release date; mark the bins inventoried after scanning,
+  with automatic reopening when counts or reference targets change.
+- Export progress/outstanding CSV reports and collection CSV and versioned JSON including copy history, attempts, source
   hashes, sessions, pass maps, routes, and audit events.
 
 **Automatic recognition acceptance is intentionally disabled.** No real-specimen
 accuracy measurements have been established. Online metadata and website lookup
 do not depend on implementing offline reference-image matching. Reference packs are
-provisional sorting destinations, not verified retail manifests. Missing-card
-percentages, original-box provenance, backup restore, and reference imagery are not
-implemented. JSON is an audit export, not a restorable backup. See
+provisional sorting destinations, not verified retail manifests. Progress percentages are provisional source-listed coverage, not certified retail
+completeness. Repackaged sets have design coverage where physical quantities are
+unverified. Original-box provenance, scenario dependency readiness, backup restore,
+and reference imagery are not implemented. JSON is an audit export, not a restorable backup. See
 [plan review](docs/PLAN_REVIEW.md) and [source register](docs/SOURCES.md).
 
 ## Build
@@ -68,15 +73,16 @@ The existing checkouts are already isolated; do not create Git worktrees for set
 
 ## Get started with ArkhamDB
 
-1. Install the **0.3.0 alpha** APK above over the previous alpha. It uses the same
-   development signing key and migrates schema 1 to schema 2 without clearing your
-   cards, copies, corrections, or pending attempts.
+1. Install the **0.4.0 alpha** APK above over the previous alpha. It uses the same
+   development signing key and migrates schemas 1 or 2 to schema 3 without clearing your
+   cards, copies, corrections, pending attempts, or saved pile placements.
 2. With internet available, open **Overview** and tap **Download from ArkhamDB**.
    The app fetches ArkhamDB’s public packs and cards APIs, with encounter cards
    included, and saves the selected metadata locally. No account or API key needed.
 3. In **Settings**, choose table capacity (including Re-sort). In **Piles**, choose
    reference-pack or cycle/chapter grouping. Refresh ArkhamDB once after upgrading
-   if you want the newly added cycle metadata; existing catalogs still sort by pack.
+   to populate copy quantities, release dates and the reference index; old catalogs
+   retain ownership but have unknown copy targets until refreshed.
 4. Go to **Scan**. **Interactive** is selected by default. Search the title or use
    camera OCR for suggestions, then select the exact printing. **View card on
    ArkhamDB** opens its live website page in your browser for comparison.
@@ -89,6 +95,20 @@ The existing checkouts are already isolated; do not create Git worktrees for set
 7. Use **Piles** to inspect the growing map and split a mixed/cycle pile later. Rapid mode currently routes every camera presentation to Re-sort;
    it is not yet the finished hands-free recognition workflow.
 
+Open **Collection → Sets & cycles** (or **Overview → Explore sets & cycles**) to
+track this bulk lot without purchase history. Counts accumulate across sessions.
+Switch between boxes/sets, cycles and encounter sets; tap a group to inspect the
+source-listed targets and outstanding cards. Extra copies of one card cannot fill
+another card's gap. Equivalent printings credit logical content; exact-printing
+counts remain separate. These overlapping views must not be summed together.
+
+Leave the optional reference cutoff blank unless you know the lot's latest release
+date. It changes targets, never deletes ownership. When all bins have been scanned,
+choose **Mark bins fully inventoried**: outstanding entries become *potentially
+missing*, not proven absent. New scans, quantity edits, unresolved attempts, target
+changes and reference refreshes reopen review automatically. Export progress or
+outstanding CSV for the selected group or current reference targets.
+
 Use **Settings → Refresh from ArkhamDB** for later updates. Failed downloads keep
 your previous catalog and ownership unchanged. Cached metadata supports offline
 search/OCR suggestions; browser pages require internet. No images, rules text, or
@@ -96,9 +116,9 @@ camera frames are uploaded or saved by the metadata downloader. It makes public
 HTTPS GET requests with timeouts, redirect checks and bounded response sizes.
 
 If a refresh fails, the app displays the reason and offers retry through the same
-button. This cloud environment blocks live ArkhamDB traffic until its network
-settings are applied; parser/persistence tests use API-shaped fixtures, so live
-API connectivity on a phone is not claimed as verified.
+button. Live cloud downloads were audited against 115 products and 5,693 visible card
+records on 2026-10-17. Phone connectivity and camera behavior still require physical
+device validation.
 
 ## Optional local reference import
 
@@ -187,11 +207,11 @@ capture. Exports use Android's user-selected document picker.
 
 - `core/`: platform-free routing policy, presentation gate, retail model,
   verified-only completeness, planner/simulator, and source-count ledger.
-- `app/`: Compose screens, bundled OCR analyzer, Room database (schema v2),
+- `app/`: Compose screens, bundled OCR analyzer, Room database (schema v3),
   transactional decisions, audio, public ArkhamDB metadata download, optional local
   catalog import, browser reference links, and exports.
-- `app/schemas/`: exported Room schemas 1 and 2. A real version-1 database fixture
-  is migrated and checked for retained cards, copies, and pending exceptions.
+- `app/schemas/`: exported Room schemas 1, 2 and 3. Real version-1 and version-2 database
+  fixtures are migrated and checked for retained inventory, attempts and live piles.
 - Tests: JVM domain tests and Robolectric tests exercising real Room transactions,
   persistence/reopen, catalog replacement, sorting, and import validation.
 

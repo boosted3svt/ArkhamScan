@@ -38,6 +38,10 @@ class NavigationTest {
         catch (e: Throwable) { throw AssertionError("Database startup: ${vm.message.value}", e) }
         model = vm
     }
+    @org.junit.After fun closeDatabase() {
+        compose.runOnIdle { compose.activity.viewModelStore.clear() }
+        (compose.activity.application as ScanApplication).database.close()
+    }
     @Test fun firstRunOffersOnlineCatalogWithoutPreparingAFile() {
         compose.onNode(hasScrollAction()).performScrollToNode(hasText("Download from ArkhamDB"))
         compose.onNodeWithText("Download from ArkhamDB").assertIsDisplayed()
@@ -45,7 +49,7 @@ class NavigationTest {
     }
     @Test fun collectionDoesNotClaimUnverifiedCompleteness() {
         compose.onNodeWithText("Collection").performClick()
-        compose.onNodeWithText("Completeness not yet available").assertIsDisplayed()
+        compose.onNodeWithText("Bulk collection progress").assertIsDisplayed()
     }
     @Test fun scanningRequiresDeliberateCameraPermissionAndShowsWorkflow() {
         compose.onNodeWithText("Scan").performClick()

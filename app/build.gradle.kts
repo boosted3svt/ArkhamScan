@@ -11,8 +11,8 @@ android {
         applicationId = "com.arkhamscan"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.3.0-alpha"
+        versionCode = 4
+        versionName = "0.4.0-alpha"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true }
@@ -59,4 +59,12 @@ tasks.withType<Test>().configureEach {
     }
     maxHeapSize = "2g"
     testLogging { events("passed", "skipped", "failed") }
+}
+
+// Optional audit of actual public API responses fetched by the developer. No live
+// network access or downloaded catalog files are required by the normal suite.
+tasks.withType<Test>().configureEach {
+    val liveDir = providers.gradleProperty("liveReferenceDir").orNull
+    if (liveDir == null) exclude("**/LiveReferenceAuditTest.class")
+    else systemProperty("arkhamscan.liveReferenceDir", liveDir)
 }

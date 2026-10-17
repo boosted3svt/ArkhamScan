@@ -9,16 +9,18 @@ import java.util.zip.GZIPInputStream
 
 /** Requests public metadata only. This client has no access to camera frames. */
 class ArkhamDbCatalog(private val get: (String) -> ByteArray = ::downloadJson) {
-    fun download(): List<CatalogCard> {
+    fun download(): List<CatalogCard> = downloadSnapshot().cards
+    fun downloadSnapshot(): CatalogSnapshot {
         // The encounter flag is documented by ArkhamDB's public API controller.
         val packs = get(PACKS_URL)
         val cards = get(CARDS_URL)
-        return parse(cards, packs)
+        return parseSnapshot(cards, packs)
     }
     companion object {
         const val PACKS_URL = "https://arkhamdb.com/api/public/packs/"
         const val CARDS_URL = "https://arkhamdb.com/api/public/cards/?encounter=1"
-        fun parse(cardsBytes: ByteArray, packsBytes: ByteArray): List<CatalogCard> {
+        fun parse(cardsBytes: ByteArray, packsBytes: ByteArray): List<CatalogCard> = parseSnapshot(cardsBytes, packsBytes).cards
+        fun parseSnapshot(cardsBytes: ByteArray, packsBytes: ByteArray): CatalogSnapshot {
             require(cardsBytes.size <= CatalogImporter.MAX_BYTES && packsBytes.size <= CatalogImporter.MAX_BYTES) { "ArkhamDB response exceeds size limit" }
             val packs = JSONArray(packsBytes.toString(Charsets.UTF_8))
             val packRecords = (0 until packs.length()).map { packs.getJSONObject(it) }
@@ -27,6 +29,19 @@ class ArkhamDbCatalog(private val get: (String) -> ByteArray = ::downloadJson) {
             require(names.isNotEmpty()) { "ArkhamDB returned no packs" }
             val cards = JSONArray(cardsBytes.toString(Charsets.UTF_8))
             require(cards.length() in 1..50000) { "ArkhamDB returned no cards or too many records" }
+            fun familyInfo(info: JSONObject): Pair<String, String> {
+                val key = info.takeIf { it.has("cycle_position") && it.getInt("cycle_position") !in setOf(50, 60, 61, 70, 80, 90) }?.let { "${it.optInt("chapter", 1)}:${it.getInt("cycle_position")}" }
+                val family = key?.let { families[it]?.sortedWith(compareBy<JSONObject> { p -> p.optInt("position", Int.MAX_VALUE) }.thenBy { p -> p.getString("code") })?.firstOrNull() }
+                return (key?.let { "arkhamdb-cycle:$it" } ?: "") to (family?.getString("name")?.let { "$it · cycle group" } ?: "")
+            }
+            val normalizedPacks = JSONArray()
+            packRecords.forEach { p ->
+                val family = familyInfo(p)
+                normalizedPacks.put(JSONObject().put("id", p.getString("code")).put("title", p.getString("name"))
+                    .put("familyId", family.first).put("familyName", family.second).put("released", p.optString("available", ""))
+                    .put("members", p.optJSONArray("reprint_packs") ?: JSONArray()).put("reprintType", p.optString("reprint_type", ""))
+                    .put("sourceKnown", p.optInt("known", -1)).put("sourceTotal", p.optInt("total", -1)).put("source", PACKS_URL))
+            }
             val normalized = JSONArray()
             for (i in 0 until cards.length()) {
                 val c = cards.getJSONObject(i)
@@ -43,11 +58,14 @@ class ArkhamDbCatalog(private val get: (String) -> ByteArray = ::downloadJson) {
                     .put("pack", pack).put("packName", packName).put("type", c.optString("type_code", ""))
                     .put("encounter", c.optString("encounter_code", ""))
                     .put("familyId", familyKey?.let { "arkhamdb-cycle:$it" } ?: "")
-                    .put("familyName", family?.getString("name")?.let { "$it · cycle group" } ?: ""))
+                    .put("familyName", family?.getString("name")?.let { "$it · cycle group" } ?: "")
+                    .put("expectedQuantity", c.optInt("quantity", -1).takeIf { it > 0 } ?: -1)
+                    .put("canonicalId", "arkhamdb:" + c.optString("duplicate_of_code", "").ifBlank { code })
+                    .put("encounterName", c.optString("encounter_name", c.optString("encounter_code", ""))))
             }
-            // Deliberately omit image URLs/bytes, rules, flavor, deck limits and expected quantities.
-            val catalog = JSONObject().put("schemaVersion", 1).put("source", CARDS_URL).put("cards", normalized)
-            return CatalogImporter.parse(catalog.toString().toByteArray(Charsets.UTF_8))
+            // Keep only factual reference metadata. Hidden back faces/pseudo-cards are excluded; no images/rules are cached.
+            val catalog = JSONObject().put("schemaVersion", 1).put("source", CARDS_URL).put("cards", normalized).put("packs", normalizedPacks)
+            return CatalogImporter.snapshot(catalog.toString().toByteArray(Charsets.UTF_8))
         }
         fun cardPage(card: CatalogCard): String? {
             val code = card.id.removePrefix("arkhamdb:")
@@ -68,7 +86,7 @@ private fun downloadJson(address: String): ByteArray {
             connection.instanceFollowRedirects = false
             connection.useCaches = false
             connection.setRequestProperty("Accept", "application/json")
-            connection.setRequestProperty("User-Agent", "ArkhamScan/0.3.0 (personal collection catalog)")
+            connection.setRequestProperty("User-Agent", "ArkhamScan/0.4.0 (personal collection catalog)")
             val status = connection.responseCode
             if (status in listOf(301, 302, 303, 307, 308)) {
                 val next = URL(url, connection.getHeaderField("Location") ?: error("Missing redirect target"))

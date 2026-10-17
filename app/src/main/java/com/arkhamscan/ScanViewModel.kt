@@ -29,6 +29,16 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     val waitingForRemoval = MutableStateFlow(false)
     private val candidateLatch = CandidateLatch()
     private var latestCandidates: List<CatalogCard> = emptyList()
+    val referencePacks = store.referencePacks().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val bulkInventory = store.bulkInventory().map { it ?: BulkInventory() }.stateIn(viewModelScope, SharingStarted.Eagerly, BulkInventory())
+    val discovery = combine(cards, copies, referencePacks, bulkInventory) { cs, owned, packs, bulk ->
+        withContext(Dispatchers.Default) {
+            DiscoveryEngine.build(cs.map { IndexCard(it.id, it.title, it.pack, it.expectedQuantity.takeIf { q -> q > 0 }, it.canonicalId.ifBlank { it.id }, it.encounter, it.encounterName) },
+                packs.ifEmpty { cs.distinctBy { it.pack }.map { ReferencePack(it.pack, it.packName, it.familyId, it.familyName, "", "[]", "", it.source, it.version) } }.map { p -> IndexPack(p.id, p.title, p.familyId, p.familyName, p.released,
+                    JSONArray(p.members).let { a -> (0 until a.length()).map { a.getString(it) }.toSet() }, p.reprintType) },
+                owned.filter { it.status == "active" }.groupingBy { it.cardId }.eachCount(), bulk.cutoff)
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, DiscoveryIndex(emptyList(), 0))
     val databaseReady = MutableStateFlow(false)
     val message = MutableStateFlow("Tap Download from ArkhamDB to get started.")
     val downloadingCatalog = MutableStateFlow(false)
@@ -50,7 +60,7 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
         liveGrouping.value = preferences.getString("liveGrouping", "PACK") ?: "PACK"
         silent.value = preferences.getBoolean("silent", false)
         speechRate.value = preferences.getFloat("speechRate", 1f)
-        work { store.session(SessionRecord(sessionId, System.currentTimeMillis(), "Collection session")); databaseReady.value = true }
+        work { store.session(SessionRecord(sessionId, System.currentTimeMillis(), "Bulk collection inventory")); store.insertBulkState(BulkInventory()); databaseReady.value = true }
     }
     fun configure(piles: Int, muted: Boolean, rate: Float) {
         capacity.value = piles.coerceIn(3, 32); silent.value = muted; speechRate.value = rate
@@ -65,9 +75,9 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
         work {
             try {
                 message.value = "Downloading ArkhamDB card and pack metadata…"
-                val imported = withContext(Dispatchers.IO) { client.download() }
-                store.importCards(imported)
-                message.value = "${imported.size} ArkhamDB printings ready. Search or scan in Interactive mode; the catalog now works offline too."
+                val imported = withContext(Dispatchers.IO) { client.downloadSnapshot() }
+                store.importCards(imported.cards, imported.packs)
+                message.value = "${imported.cards.size} ArkhamDB printings ready. Search or scan in Interactive mode; the catalog now works offline too."
             } catch (e: kotlinx.coroutines.CancellationException) { throw e }
             catch (e: Exception) { message.value = "Could not update ArkhamDB: ${e.message ?: "check your connection"}. Your inventory and previous catalog are unchanged." }
             finally { downloadingCatalog.value = false }
@@ -88,10 +98,33 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
                 output.toByteArray()
             }
                 ?: error("Could not open catalog")
-            CatalogImporter.parse(data)
+            CatalogImporter.snapshot(data)
         }
-        store.importCards(imported)
-        message.value = "Imported ${imported.size} printings. Retail manifests remain unverified."
+        store.importCards(imported.cards, imported.packs)
+        message.value = "Imported ${imported.cards.size} printings. Retail manifests remain unverified."
+    }
+    fun setCutoff(cutoff: String) = work {
+        require(cutoff.trim().isBlank() || runCatching { java.time.LocalDate.parse(cutoff.trim()) }.isSuccess) { "Use YYYY-MM-DD or leave the cutoff blank." }
+        store.setCutoff(cutoff.trim())
+        message.value = "Reference cutoff updated. Ownership is unchanged; inventory review is open."
+    }
+    fun finishBulkInventory(revision: Long) = work {
+        require(cards.value.isNotEmpty()) { "Download the reference index first" }
+        store.finishBulkInventory(revision)
+        message.value = "Inventory marked finished. Outstanding entries are potentially missing; source gaps and unresolved attempts still need review."
+    }
+    fun reopenInventory() = work { store.touchInventory(); message.value = "Inventory reopened. Outstanding entries mean not yet accounted for." }
+    fun discoveryCsv(scopeId: String? = null, outstandingOnly: Boolean = false): String {
+        fun q(s: String): String {
+            val safe = if (s.trimStart().firstOrNull() in listOf('=', '+', '-', '@')) "'$s" else s
+            return "\"${safe.replace("\"", "\"\"")}\""
+        }
+        val finished = bulkInventory.value.finishedAt != null
+        val rows = discovery.value.scopes.filter { if (scopeId == null) it.inTarget else it.id == scopeId }.flatMap { scope -> scope.rows.filter { !outstandingOnly || (it.outstanding?.let { n -> n > 0 } ?: (it.observed == 0)) }.map { row ->
+            listOf(scope.kind, scope.title, row.id, row.title, row.expected?.toString() ?: "unknown", row.observed.toString(), row.exact.toString(),
+                row.outstanding?.toString() ?: "unknown", row.extras?.toString() ?: "unknown", when { row.expected?.let { row.observed >= it } == true -> "listed_quantity_accounted"; row.expected == null && row.observed > 0 -> "design_present_copy_target_unknown"; finished -> "potentially_missing"; else -> "not_yet_accounted_for" }, scope.sourceNote, bulkInventory.value.cutoff)
+        } }
+        return "scope_type,scope,logical_card_id,title,source_quantity,accounted_copies,exact_printing_copies,outstanding,extra,status,reference_note,cutoff\r\n" + rows.joinToString("\r\n") { it.joinToString(",", transform = ::q) }
     }
     /** OCR supplies suggestions only. No confidence calibration or image identity is fabricated. */
     fun recognizedText(text: String) {
@@ -224,6 +257,9 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
         return JSONObject().put("schemaVersion", 1).put("exportedAt", System.currentTimeMillis())
             .put("catalogSource", cards.value.firstOrNull()?.source ?: JSONObject.NULL)
             .put("copies", jsonArray(copies.value.map { it.toJson() }))
+            .put("bulkInventory", JSONObject().put("cutoff", bulkInventory.value.cutoff).put("revision", bulkInventory.value.revision).put("finishedAt", bulkInventory.value.finishedAt ?: JSONObject.NULL).put("finishedRevision", bulkInventory.value.finishedRevision))
+            .put("referencePacks", jsonArray(referencePacks.value.map { p -> JSONObject().put("id", p.id).put("title", p.title).put("familyId", p.familyId).put("familyName", p.familyName).put("released", p.released).put("members", JSONArray(p.members)).put("reprintType", p.reprintType).put("source", p.source).put("version", p.version) }))
+            .put("referenceCards", jsonArray(cards.value.map { c -> JSONObject().put("id", c.id).put("title", c.title).put("pack", c.pack).put("encounter", c.encounter).put("encounterName", c.encounterName).put("canonicalId", c.canonicalId).put("expectedQuantity", c.expectedQuantity).put("version", c.version) }))
             .put("liveRuns", jsonArray(liveRuns.value.map { JSONObject().put("id", it.id).put("capacity", it.capacity).put("grouping", it.grouping).put("catalogVersion", it.catalogVersion).put("createdAt", it.createdAt).put("state", it.state) }))
             .put("liveGroups", jsonArray(liveGroups.value.map { JSONObject().put("runId", it.runId).put("groupId", it.groupId).put("label", it.label).put("pile", it.pile) }))
             .put("livePlacements", jsonArray(livePlacements.value.map { JSONObject().put("copyId", it.copyId).put("runId", it.runId).put("groupId", it.groupId).put("pile", it.pile).put("at", it.at) }))

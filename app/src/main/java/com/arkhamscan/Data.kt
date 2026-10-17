@@ -15,7 +15,10 @@ import java.util.UUID
 @Entity(tableName = "cards")
 data class CatalogCard(@PrimaryKey val id: String, val title: String, val number: String, val pack: String,
     val packName: String, val type: String, val encounter: String, val source: String, val version: String,
-    @ColumnInfo(defaultValue = "''") val familyId: String = "", @ColumnInfo(defaultValue = "''") val familyName: String = "")
+    @ColumnInfo(defaultValue = "''") val familyId: String = "", @ColumnInfo(defaultValue = "''") val familyName: String = "",
+    @ColumnInfo(defaultValue = "-1") val expectedQuantity: Int = -1,
+    @ColumnInfo(defaultValue = "''") val canonicalId: String = "",
+    @ColumnInfo(defaultValue = "''") val encounterName: String = "")
 @Entity(tableName = "copies")
 data class CopyRecord(@PrimaryKey val id: String, val cardId: String, val title: String, val pack: String,
     val packName: String, val catalogVersion: String, val source: String, val createdAt: Long,
@@ -41,8 +44,41 @@ data class LivePileGroup(val runId: String, val groupId: String, val label: Stri
 data class LivePlacement(@PrimaryKey val copyId: String, val runId: String, val groupId: String, val pile: Int, val at: Long)
 data class ConfirmedPlacement(val added: Boolean, val run: LiveRun, val group: LivePileGroup)
 
+@Entity(tableName = "reference_packs")
+data class ReferencePack(@PrimaryKey val id: String, val title: String, val familyId: String, val familyName: String,
+    val released: String, val members: String, val reprintType: String, val source: String, val version: String,
+    val sourceKnown: Int = -1, val sourceTotal: Int = -1)
+@Entity(tableName = "bulk_inventory")
+data class BulkInventory(@PrimaryKey val id: Int = 1, val cutoff: String = "", val revision: Long = 0,
+    val finishedAt: Long? = null, val finishedRevision: Long = -1)
+data class CatalogSnapshot(val cards: List<CatalogCard>, val packs: List<ReferencePack>)
+
 @Dao
 abstract class Store {
+    @Query("SELECT * FROM reference_packs ORDER BY title") abstract fun referencePacks(): Flow<List<ReferencePack>>
+    @Query("SELECT * FROM bulk_inventory WHERE id=1") abstract fun bulkInventory(): Flow<BulkInventory?>
+    @Query("SELECT * FROM bulk_inventory WHERE id=1") abstract suspend fun currentBulkInventory(): BulkInventory?
+    @Insert(onConflict = OnConflictStrategy.IGNORE) abstract suspend fun insertBulkState(state: BulkInventory): Long
+    @Query("UPDATE bulk_inventory SET revision=revision+1, finishedAt=NULL, finishedRevision=-1 WHERE id=1") abstract suspend fun reopenBulkState()
+    @Query("UPDATE bulk_inventory SET cutoff=:cutoff WHERE id=1") abstract suspend fun writeCutoff(cutoff: String)
+    @Query("UPDATE bulk_inventory SET finishedAt=:at, finishedRevision=revision WHERE id=1") abstract suspend fun finishBulkState(at: Long)
+    @Query("DELETE FROM reference_packs") abstract suspend fun clearReferencePacks()
+    @Insert abstract suspend fun insertReferencePacks(packs: List<ReferencePack>)
+    @Transaction open suspend fun touchInventory() { insertBulkState(BulkInventory()); reopenBulkState() }
+    @Transaction open suspend fun setCutoff(cutoff: String) {
+        if (cutoff.isNotBlank()) java.time.LocalDate.parse(cutoff)
+        insertBulkState(BulkInventory())
+        if (currentBulkInventory()!!.cutoff != cutoff) {
+            writeCutoff(cutoff); touchInventory()
+            audit(AuditRecord(UUID.randomUUID().toString(), System.currentTimeMillis(), "REFERENCE_CUTOFF", "bulk", cutoff.ifBlank { "All known references" }))
+        }
+    }
+    @Transaction open suspend fun finishBulkInventory(expectedRevision: Long) {
+        insertBulkState(BulkInventory())
+        require(currentBulkInventory()!!.revision == expectedRevision) { "Inventory changed during review. Review the latest counts and finish again." }
+        finishBulkState(System.currentTimeMillis())
+        audit(AuditRecord(UUID.randomUUID().toString(), System.currentTimeMillis(), "FINISH_BULK_INVENTORY", "bulk", "revision=$expectedRevision; outstanding entries are potentially missing, not proven absent"))
+    }
     @Query("SELECT * FROM cards ORDER BY title, id") abstract fun cards(): Flow<List<CatalogCard>>
     @Query("SELECT * FROM copies ORDER BY createdAt DESC") abstract fun copies(): Flow<List<CopyRecord>>
     @Query("SELECT * FROM exceptions ORDER BY createdAt DESC") abstract fun exceptions(): Flow<List<ExceptionRecord>>
@@ -52,7 +88,12 @@ abstract class Store {
     @Query("SELECT * FROM sessions") abstract suspend fun allSessions(): List<SessionRecord>
     @Insert(onConflict = OnConflictStrategy.IGNORE) abstract suspend fun session(s: SessionRecord)
     @Insert(onConflict = OnConflictStrategy.IGNORE) abstract suspend fun addCopy(c: CopyRecord): Long
-    @Insert(onConflict = OnConflictStrategy.IGNORE) abstract suspend fun addException(e: ExceptionRecord): Long
+    @Insert(onConflict = OnConflictStrategy.IGNORE) abstract suspend fun insertException(e: ExceptionRecord): Long
+    @Transaction open suspend fun addException(e: ExceptionRecord): Long {
+        val result = insertException(e)
+        if (result != -1L) touchInventory()
+        return result
+    }
     @Insert abstract suspend fun audit(a: AuditRecord)
     @Insert abstract suspend fun insertCards(cards: List<CatalogCard>)
     @Query("DELETE FROM cards") abstract suspend fun clearCatalog()
@@ -137,12 +178,18 @@ abstract class Store {
             if (voidCopy(copy.id) == 0) return false
         }
         audit(AuditRecord("adjust-$event", System.currentTimeMillis(), "ADJUST_QUANTITY", card.id, "delta=$delta; copy=$copyId; collection edit does not route a physical card"))
+        touchInventory()
         return true
     }
 
-    @Transaction open suspend fun importCards(cards: List<CatalogCard>) {
+    @Transaction open suspend fun importCards(cards: List<CatalogCard>, packs: List<ReferencePack> = emptyList()) {
         require(cards.isNotEmpty() && cards.map { it.id }.toSet().size == cards.size)
         clearCatalog(); insertCards(cards)
+        clearReferencePacks()
+        val references = packs.ifEmpty { cards.distinctBy { it.pack }.map { ReferencePack(it.pack, it.packName, it.familyId, it.familyName, "", "[]", "", it.source, it.version) } }
+        require(references.map { it.id }.toSet().size == references.size)
+        insertReferencePacks(references)
+        touchInventory()
         audit(AuditRecord(UUID.randomUUID().toString(), System.currentTimeMillis(), "IMPORT_CATALOG", cards.first().version, "${cards.size} cards; no verified retail manifests"))
     }
     @Transaction open suspend fun confirm(card: CatalogCard, event: String, sessionId: String, exceptionId: String? = null): Boolean {
@@ -151,6 +198,7 @@ abstract class Store {
         val added = addCopy(CopyRecord(event, card.id, card.title, card.pack, card.packName, card.version,
             card.source, System.currentTimeMillis(), sessionId, "MANUAL_VERIFIED")) != -1L
         if (added) {
+            touchInventory()
             audit(AuditRecord("confirm-$event", System.currentTimeMillis(), "NEW_COPY", event, "Explicit physical-copy confirmation; retail provenance unverified"))
             if (exceptionId != null) markException(exceptionId, "new_copy:$event")
         }
@@ -158,10 +206,10 @@ abstract class Store {
     }
     @Transaction open suspend fun dismiss(id: String, decision: String) {
         require(decision in setOf("already_counted", "deferred"))
-        if (markException(id, decision) > 0) audit(AuditRecord(UUID.randomUUID().toString(), System.currentTimeMillis(), decision.uppercase(), id, "User reconciled physical Re-sort card"))
+        if (markException(id, decision) > 0) { touchInventory(); audit(AuditRecord(UUID.randomUUID().toString(), System.currentTimeMillis(), decision.uppercase(), id, "User reconciled physical Re-sort card")) }
     }
     @Transaction open suspend fun undo(id: String) {
-        if (voidCopy(id) > 0) audit(AuditRecord(UUID.randomUUID().toString(), System.currentTimeMillis(), "VOID_COPY", id, "User undo; historical record retained"))
+        if (voidCopy(id) > 0) { touchInventory(); audit(AuditRecord(UUID.randomUUID().toString(), System.currentTimeMillis(), "VOID_COPY", id, "User undo; historical record retained")) }
     }
     @Transaction open suspend fun route(record: RouteRecord): Boolean {
         if (hasRoute(record.id) > 0) return false
@@ -184,7 +232,7 @@ abstract class Store {
 }
 
 @Database(entities = [CatalogCard::class, CopyRecord::class, ExceptionRecord::class, AuditRecord::class,
-    SessionRecord::class, SavedPass::class, RouteRecord::class, LiveRun::class, LivePileGroup::class, LivePlacement::class], version = 2, exportSchema = true)
+    SessionRecord::class, SavedPass::class, RouteRecord::class, LiveRun::class, LivePileGroup::class, LivePlacement::class, ReferencePack::class, BulkInventory::class], version = 3, exportSchema = true)
 abstract class ScanDatabase : RoomDatabase() {
     abstract fun store(): Store
     companion object {
@@ -197,13 +245,24 @@ abstract class ScanDatabase : RoomDatabase() {
                 db.execSQL("CREATE TABLE IF NOT EXISTS live_placements (copyId TEXT NOT NULL, runId TEXT NOT NULL, groupId TEXT NOT NULL, pile INTEGER NOT NULL, at INTEGER NOT NULL, PRIMARY KEY(copyId))")
             }
         }
-        fun open(context: Context) = Room.databaseBuilder(context, ScanDatabase::class.java, "arkhamscan.db").addMigrations(MIGRATION_1_2).build()
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE cards ADD COLUMN expectedQuantity INTEGER NOT NULL DEFAULT -1")
+                db.execSQL("ALTER TABLE cards ADD COLUMN canonicalId TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE cards ADD COLUMN encounterName TEXT NOT NULL DEFAULT ''")
+                db.execSQL("CREATE TABLE IF NOT EXISTS reference_packs (id TEXT NOT NULL, title TEXT NOT NULL, familyId TEXT NOT NULL, familyName TEXT NOT NULL, released TEXT NOT NULL, members TEXT NOT NULL, reprintType TEXT NOT NULL, source TEXT NOT NULL, version TEXT NOT NULL, sourceKnown INTEGER NOT NULL, sourceTotal INTEGER NOT NULL, PRIMARY KEY(id))")
+                db.execSQL("CREATE TABLE IF NOT EXISTS bulk_inventory (id INTEGER NOT NULL, cutoff TEXT NOT NULL, revision INTEGER NOT NULL, finishedAt INTEGER, finishedRevision INTEGER NOT NULL, PRIMARY KEY(id))")
+                db.execSQL("INSERT OR IGNORE INTO bulk_inventory VALUES(1, '', 0, NULL, -1)")
+            }
+        }
+        fun open(context: Context) = Room.databaseBuilder(context, ScanDatabase::class.java, "arkhamscan.db").addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
     }
 }
 
 object CatalogImporter {
     const val MAX_BYTES = 16 * 1024 * 1024
-    fun parse(bytes: ByteArray): List<CatalogCard> {
+    fun parse(bytes: ByteArray): List<CatalogCard> = snapshot(bytes).cards
+    fun snapshot(bytes: ByteArray): CatalogSnapshot {
         require(bytes.size <= MAX_BYTES) { "Catalog exceeds 16 MiB" }
         val root = JSONObject(bytes.toString(Charsets.UTF_8))
         require(root.getInt("schemaVersion") == 1) { "Unsupported catalog schema" }
@@ -212,12 +271,22 @@ object CatalogImporter {
         val version = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
         val cards = root.getJSONArray("cards")
         require(cards.length() in 1..50000) { "Expected 1–50,000 reference cards" }
-        return (0 until cards.length()).map { i ->
+        val parsedCards = (0 until cards.length()).map { i ->
             val c = cards.getJSONObject(i)
             fun field(k: String): String = c.getString(k).trim().also { require(it.isNotEmpty() && it.length <= 500) { "Invalid $k at card $i" } }
             CatalogCard(field("id"), field("title"), c.optString("number"), field("pack"), field("packName"),
-                c.optString("type"), c.optString("encounter"), source, version, c.optString("familyId"), c.optString("familyName"))
+                c.optString("type"), c.optString("encounter"), source, version, c.optString("familyId"), c.optString("familyName"), c.optInt("expectedQuantity", -1).also { require(it == -1 || it in 1..10000) { "Invalid expected copy quantity" } }, c.optString("canonicalId"), c.optString("encounterName"))
         }.also { require(it.map { c -> c.id }.toSet().size == it.size) { "Duplicate printing IDs" } }
+        val ps = root.optJSONArray("packs")
+        val parsedPacks = if (ps == null) emptyList() else (0 until ps.length()).map { i ->
+            val p = ps.getJSONObject(i)
+            val date = p.optString("released")
+            if (date.isNotBlank()) java.time.LocalDate.parse(date)
+            ReferencePack(p.getString("id"), p.getString("title"), p.optString("familyId"), p.optString("familyName"), date,
+                (p.optJSONArray("members") ?: JSONArray()).toString(), p.optString("reprintType"), p.optString("source", source), version, p.optInt("sourceKnown", -1), p.optInt("sourceTotal", -1))
+        }.also { require(it.map { p -> p.id }.toSet().size == it.size) { "Duplicate reference product IDs" } }
+        if (parsedPacks.isNotEmpty()) require(parsedCards.all { c -> parsedPacks.any { it.id == c.pack } }) { "Card references unknown product" }
+        return CatalogSnapshot(parsedCards, parsedPacks)
     }
 }
 
