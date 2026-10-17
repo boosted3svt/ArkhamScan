@@ -92,6 +92,13 @@ private val tabs = listOf("Overview", "Scan", "Collection", "Re-sort", "Piles", 
     val routes by vm.routes.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
     val mode by vm.mode.collectAsStateWithLifecycle()
+    val liveRuns by vm.liveRuns.collectAsStateWithLifecycle()
+    val liveGroups by vm.liveGroups.collectAsStateWithLifecycle()
+    val livePlacements by vm.livePlacements.collectAsStateWithLifecycle()
+    val lastPile by vm.lastPile.collectAsStateWithLifecycle()
+    val waitingForRemoval by vm.waitingForRemoval.collectAsStateWithLifecycle()
+    val liveGrouping by vm.liveGrouping.collectAsStateWithLifecycle()
+    val liveRun = liveRuns.firstOrNull()
     val active = copies.filter { it.status == "active" }
     val selectable = (cards + active.map { CatalogCard(it.cardId, it.title, "", it.pack, it.packName, "", "", it.source, it.catalogVersion) }).distinctBy { it.id }
     var tab by remember { mutableIntStateOf(0) }
@@ -99,6 +106,7 @@ private val tabs = listOf("Overview", "Scan", "Collection", "Re-sort", "Piles", 
     var selected by remember { mutableStateOf<CatalogCard?>(null) }
     var exceptionId by remember { mutableStateOf<String?>(null) }
     var eventId by remember { mutableStateOf("") }
+    var resetLiveMap by remember { mutableStateOf(false) }
     var undoCopy by remember { mutableStateOf<CopyRecord?>(null) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -120,7 +128,7 @@ private val tabs = listOf("Overview", "Scan", "Collection", "Re-sort", "Piles", 
     Scaffold(topBar = {
         TopAppBar(title = { Column { Text("ARKHAMSCAN", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Text("THE COLLECTION DESK", style = MaterialTheme.typography.labelSmall, color = Gold) } },
-            actions = { Text("ALPHA 02", modifier = Modifier.padding(end = 16.dp), style = MaterialTheme.typography.labelSmall, color = Gold) })
+            actions = { Text("ALPHA 03", modifier = Modifier.padding(end = 16.dp), style = MaterialTheme.typography.labelSmall, color = Gold) })
     }, bottomBar = {
         NavigationBar {
             val icons = listOf(Icons.Outlined.Dashboard, Icons.Outlined.CameraAlt, Icons.Outlined.Style,
@@ -163,7 +171,10 @@ private val tabs = listOf("Overview", "Scan", "Collection", "Re-sort", "Piles", 
                     }
                     item { CameraPanel(vm, mode) }
                     item { val suggested by vm.suggestions.collectAsStateWithLifecycle()
-                        Text("Live candidates", style = MaterialTheme.typography.titleMedium)
+                        lastPile?.let { Text("Last confirmed placement", style = MaterialTheme.typography.labelSmall); Text(it, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Gold) }
+                        Text("Held camera suggestions", style = MaterialTheme.typography.titleMedium)
+                        Text(if (waitingForRemoval) "Remove this card before the next scan, or tap Next card to retry." else "Suggestions stay readable until you choose one or tap Next card. Check the exact printing before confirming.", style = MaterialTheme.typography.bodySmall)
+                        OutlinedButton(onClick = { vm.nextCard() }) { Text("Next card / retry") }
                         if (suggested.isEmpty()) Text("No current title candidates. Search below to identify manually.")
                         suggested.forEach { card -> CardRow(card, active.count { it.cardId == card.id }) { choose(card) } }
                     }
@@ -177,15 +188,23 @@ private val tabs = listOf("Overview", "Scan", "Collection", "Re-sort", "Piles", 
                         OutlinedButton(onClick = { exportJson.launch("arkhamscan-audit.json") }) { Text("Export JSON") }
                     } }
                     item { InfoCard("Completeness not yet available", "Reference packs are not verified retail manifests. Unscanned cards mean unknown ownership, not confirmed missing. Identical faces may have multiple retail origins.") }
+                    if (passes.any { it.status == "active" }) item { Text("Finish or abandon the active re-sort pass in Piles before editing quantities.", color = Gold) }
                     item { OutlinedTextField(search, { search = it }, label = { Text("Search collection") }, modifier = Modifier.fillMaxWidth()) }
-                    if (active.isEmpty()) item { EmptyState("Your collection starts here", "Download from ArkhamDB on Overview, then use the scanning desk to identify and confirm each physical copy.") }
-                    items(active.groupBy { it.cardId }.values.filter { search.isBlank() || it.first().title.contains(search, true) || it.first().packName.contains(search, true) }, key = { it.first().cardId }) { group ->
+                    if (copies.isEmpty()) item { EmptyState("Your collection starts here", "Download from ArkhamDB on Overview, then use the scanning desk to identify and confirm each physical copy.") }
+                    items(copies.groupBy { it.cardId }.values.filter { search.isBlank() || it.first().title.contains(search, true) || it.first().packName.contains(search, true) }, key = { it.first().cardId }) { group ->
                         val c = group.first()
                         Surface(shape = RoundedCornerShape(12.dp)) { Column(Modifier.padding(16.dp)) {
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(c.title, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold); Text("×${group.size}", color = Gold) }
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(c.title, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold); Text("×${group.count { it.status == "active" }}", color = Gold) }
                             Text("${c.cardId} · ${c.packName}", style = MaterialTheme.typography.bodySmall)
                             Text("User verified · retail origin unverified", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
-                            TextButton(onClick = { undoCopy = c }) { Text("Remove one copy") }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                val quantity = group.count { it.status == "active" }
+                                val card = cards.firstOrNull { it.id == c.cardId } ?: CatalogCard(c.cardId, c.title, "", c.pack, c.packName, "", "", c.source, c.catalogVersion)
+                                IconButton(onClick = { vm.adjustQuantity(card, -1) }, enabled = quantity > 0 && passes.none { it.status == "active" }) { Icon(Icons.Outlined.Remove, contentDescription = "Decrease ${c.title}") }
+                                Text(quantity.toString(), style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 12.dp))
+                                IconButton(onClick = { vm.adjustQuantity(card, 1) }, enabled = passes.none { it.status == "active" }) { Icon(Icons.Outlined.Add, contentDescription = "Increase ${c.title}") }
+                            }
+                            Text("Quantity edits update ownership only; they do not move cards between physical piles.", style = MaterialTheme.typography.labelSmall)
                         } }
                     }
                 }
@@ -210,7 +229,35 @@ private val tabs = listOf("Overview", "Scan", "Collection", "Re-sort", "Piles", 
                     }
                 }
                 4 -> {
-                    item { InfoCard("Small table. Large collection.", "The planner groups provisional reference packs into bounded physical piles. Each saved pass freezes its routing map and source counts. Re-sorting can never add owned copies.") }
+                    item {
+                        InfoCard("Sort as you scan", "Each confirmed new copy gets a visible and spoken pile number. Existing group numbers stay fixed. The last numbered pile holds extra groups for a later split; the final table position is always Re-sort.")
+                        Text("Grouping for the next fresh map", style = MaterialTheme.typography.titleMedium)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(liveGrouping == "PACK", onClick = { vm.setLiveGrouping("PACK") }); Text("Retail reference pack")
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(liveGrouping == "CYCLE", onClick = { vm.setLiveGrouping("CYCLE") }); Text("ArkhamDB cycle / chapter group")
+                        }
+                        Text("Reference packs and cycles are useful sorting groups, but identical reprints do not prove which box you bought. Refresh ArkhamDB for cycle metadata; older catalogs fall back to pack grouping.", style = MaterialTheme.typography.bodySmall)
+                        OutlinedButton(onClick = { resetLiveMap = true }, enabled = cards.isNotEmpty() && passes.none { it.status == "active" }) { Text("Start fresh live pile map") }
+                        liveRun?.let { run ->
+                            Text("${if (run.state != "active") "SAVED MAP · not the current table" else "LIVE MAP"} · ${run.capacity} positions · ${if (run.grouping == "PACK") "reference packs" else "cycle groups"}", color = Gold)
+                            Text("Capacity and grouping are fixed for this map. A fresh map requires a cleared table; inventory stays unchanged.", style = MaterialTheme.typography.bodySmall)
+                            val groups = liveGroups.filter { it.runId == run.id }
+                            val activeIds = active.map { it.id }.toSet()
+                            groups.groupBy { it.pile }.toSortedMap().forEach { (number, members) ->
+                                val quantity = livePlacements.count { it.runId == run.id && it.pile == number && it.copyId in activeIds }
+                                val mixed = number == run.capacity - 1
+                                Text("Pile $number · ${if (mixed) "Mixed groups — split later" else members.first().label}", style = MaterialTheme.typography.titleLarge)
+                                Text("$quantity confirmed copies · " + members.joinToString(" · ") { it.label })
+                                if ((mixed || run.grouping == "CYCLE") && passes.none { saved -> val source = JSONObject(saved.json); saved.status != "abandoned" && source.optString("liveRunId") == run.id && source.optInt("livePile", -1) == number }) TextButton(onClick = { vm.makePlan(source = "live map ${run.id.take(8)} / Pile $number", liveSource = run.id to number) }, enabled = quantity > 0 && passes.none { it.status == "active" }) { Text("Split Pile $number by reference pack") }
+                            }
+                            Text("Position ${run.capacity}: Re-sort", color = MaterialTheme.colorScheme.secondary)
+                            if (groups.isEmpty()) Text("Confirm a card on Scan to assign your first pile.")
+                        } ?: Text("Start a fresh map on a cleared table. With no prior re-sort pass, the first card confirmation can also start it automatically.")
+                    }
+                    item { Text("Re-sort existing inventory", style = MaterialTheme.typography.titleLarge)
+                        Text("Earlier inventory and collection quantity edits have no automatic physical placement. Use a separate count-preserving pass to sort those cards.", style = MaterialTheme.typography.bodySmall) }
                     item {
                         val cap by vm.capacity.collectAsStateWithLifecycle()
                         Text("Table capacity: $cap positions, including Re-sort")
@@ -250,7 +297,7 @@ private val tabs = listOf("Overview", "Scan", "Collection", "Re-sort", "Piles", 
                     item {
                         val cap by vm.capacity.collectAsStateWithLifecycle(); val muted by vm.silent.collectAsStateWithLifecycle(); val rate by vm.speechRate.collectAsStateWithLifecycle()
                         Text("Sorting space", style = MaterialTheme.typography.titleMedium)
-                        Text("$cap simultaneous piles · proposal, editable for future passes")
+                        Text("$cap simultaneous positions including Re-sort · applies to the next fresh map or pass")
                         Slider(value = cap.toFloat(), onValueChange = { vm.configure(it.toInt(), muted, rate) }, valueRange = 3f..12f, steps = 8)
                         Row(verticalAlignment = Alignment.CenterVertically) { Text("Silent mode", Modifier.weight(1f)); Switch(muted, { vm.configure(cap, it, rate) }) }
                         Text("Speech speed: ${"%.1f".format(rate)}×")
@@ -284,6 +331,10 @@ private val tabs = listOf("Overview", "Scan", "Collection", "Re-sort", "Piles", 
             }) { Text(if (mode == Mode.RESORT_EXISTING) "Route existing copy" else "New physical copy") } },
             dismissButton = { TextButton(onClick = { exceptionId?.let { vm.dismiss(it, "already_counted") }; selected = null }) { Text(if (exceptionId != null) "Already counted" else "Cancel") } })
     }
+    if (resetLiveMap) AlertDialog(onDismissRequest = { resetLiveMap = false }, title = { Text("Start with a cleared table?") },
+        text = { Text("Set aside or finish the previous physical piles first. A fresh map may reuse their numbers with different destinations. Your owned quantities and historical maps stay unchanged.") },
+        confirmButton = { TextButton(onClick = { vm.startFreshPiles(); resetLiveMap = false }) { Text("Table cleared · start map") } },
+        dismissButton = { TextButton(onClick = { resetLiveMap = false }) { Text("Keep current map") } })
     undoCopy?.let { copy -> AlertDialog(onDismissRequest = { undoCopy = null }, title = { Text("Remove one confirmed copy?") }, text = { Text("${copy.title}\nThis keeps an audit record and reduces ownership by one.") }, confirmButton = { TextButton(onClick = { vm.undo(copy.id); undoCopy = null }) { Text("Remove one") } }, dismissButton = { TextButton(onClick = { undoCopy = null }) { Text("Keep copy") } }) }
 }
 private fun matches(c: CatalogCard, s: String) = listOf(c.title, c.id, c.number, c.packName, c.encounter, c.type).any { it.contains(s, true) }

@@ -3,6 +3,11 @@ package com.arkhamscan
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.hasContentDescription
+import kotlinx.coroutines.runBlocking
+import org.robolectric.shadows.ShadowSystemClock
+import java.time.Duration
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasText
@@ -21,6 +26,7 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28], application = UiTestApplication::class)
 class NavigationTest {
+    private lateinit var model: ScanViewModel
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
     @Before fun awaitDatabaseStartup() {
         lateinit var vm: ScanViewModel
@@ -30,6 +36,7 @@ class NavigationTest {
             vm.databaseReady.value
         } }
         catch (e: Throwable) { throw AssertionError("Database startup: ${vm.message.value}", e) }
+        model = vm
     }
     @Test fun firstRunOffersOnlineCatalogWithoutPreparingAFile() {
         compose.onNode(hasScrollAction()).performScrollToNode(hasText("Download from ArkhamDB"))

@@ -121,3 +121,50 @@ class PassLedger(private val sourceQuantities: Map<String, Int>, entries: Map<St
     }
     fun snapshot(): Map<String, String> = events.toMap()
 }
+
+/** Presentation-only latch: holding a candidate never certifies a recognition match. */
+class CandidateLatch(private val stableMs: Long = 200, private val removalMs: Long = 900) {
+    private val pending = linkedMapOf<String, Pair<Long, Long>>()
+    private val held = mutableListOf<String>()
+    private var consumed = emptySet<String>()
+    private var emptySince: Long? = null
+    var waitingForRemoval = false; private set
+    val candidates: List<String> get() = held.toList()
+    fun observe(ids: List<String>, now: Long): List<String> {
+        val fresh = ids.distinct().take(8)
+        if (fresh.isEmpty()) {
+            if (emptySince == null) emptySince = now
+            pending.clear()
+            if (waitingForRemoval && now - emptySince!! >= removalMs) { waitingForRemoval = false; consumed = emptySet() }
+            return candidates // OCR dropouts never erase the buttons under a user's finger.
+        }
+        emptySince = null
+        pending.keys.filter { it !in fresh }.toList().forEach { pending.remove(it) }
+        fresh.forEach { id ->
+            val previous = pending[id]
+            pending[id] = if (previous == null || now - previous.second > 1500) now to now else previous.first to now
+        }
+        val stable = fresh.filter { now - pending.getValue(it).first >= stableMs }
+        if (waitingForRemoval) {
+            // A different title may indicate a changed card, but still requires manual confirmation.
+            if (stable.isEmpty() || stable.any { it in consumed }) return candidates
+            waitingForRemoval = false; consumed = emptySet()
+        }
+        if (held.isEmpty()) held.addAll(stable)
+        // Freeze the entire list, including ordering, until selection or explicit Next card.
+        return candidates
+    }
+    fun consume(ids: Set<String> = held.toSet()) { consumed = ids; held.clear(); pending.clear(); waitingForRemoval = true; emptySince = null }
+    fun next() { held.clear(); pending.clear(); consumed = emptySet(); waitingForRemoval = false; emptySince = null }
+}
+
+data class LiveGroup(val id: String, val label: String, val pile: Int)
+object GrowingPilePlanner {
+    /** First-seen groups retain their slots. The last numbered slot is a bounded mixed pile. */
+    fun assign(groups: List<LiveGroup>, id: String, label: String, capacity: Int): LiveGroup {
+        require(capacity in 3..32 && id.isNotBlank() && label.isNotBlank())
+        groups.firstOrNull { it.id == id }?.let { return it }
+        val dedicated = (1 until capacity - 1).firstOrNull { n -> groups.none { it.pile == n } }
+        return LiveGroup(id, label, dedicated ?: capacity - 1)
+    }
+}

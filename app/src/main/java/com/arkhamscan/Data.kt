@@ -2,6 +2,10 @@ package com.arkhamscan
 
 import android.content.Context
 import androidx.room.*
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
+import com.arkhamscan.core.GrowingPilePlanner
+import com.arkhamscan.core.LiveGroup
 import kotlinx.coroutines.flow.Flow
 import org.json.JSONArray
 import org.json.JSONObject
@@ -10,7 +14,8 @@ import java.util.UUID
 
 @Entity(tableName = "cards")
 data class CatalogCard(@PrimaryKey val id: String, val title: String, val number: String, val pack: String,
-    val packName: String, val type: String, val encounter: String, val source: String, val version: String)
+    val packName: String, val type: String, val encounter: String, val source: String, val version: String,
+    @ColumnInfo(defaultValue = "''") val familyId: String = "", @ColumnInfo(defaultValue = "''") val familyName: String = "")
 @Entity(tableName = "copies")
 data class CopyRecord(@PrimaryKey val id: String, val cardId: String, val title: String, val pack: String,
     val packName: String, val catalogVersion: String, val source: String, val createdAt: Long,
@@ -26,6 +31,15 @@ data class SessionRecord(@PrimaryKey val id: String, val startedAt: Long, val na
 data class SavedPass(@PrimaryKey val id: String, val json: String, val createdAt: Long, val status: String = "active")
 @Entity(tableName = "routes", indices = [Index("passId")])
 data class RouteRecord(@PrimaryKey val id: String, val passId: String, val cardId: String, val pile: Int, val at: Long)
+
+@Entity(tableName = "live_runs")
+data class LiveRun(@PrimaryKey val id: String, val capacity: Int, val grouping: String,
+    val catalogVersion: String, val createdAt: Long, val state: String = "active")
+@Entity(tableName = "live_groups", primaryKeys = ["runId", "groupId"])
+data class LivePileGroup(val runId: String, val groupId: String, val label: String, val pile: Int)
+@Entity(tableName = "live_placements")
+data class LivePlacement(@PrimaryKey val copyId: String, val runId: String, val groupId: String, val pile: Int, val at: Long)
+data class ConfirmedPlacement(val added: Boolean, val run: LiveRun, val group: LivePileGroup)
 
 @Dao
 abstract class Store {
@@ -56,6 +70,75 @@ abstract class Store {
     @Query("SELECT COUNT(*) FROM routes WHERE passId=:pass AND cardId=:card") abstract suspend fun routed(pass: String, card: String): Int
     @Query("SELECT COUNT(*) FROM routes WHERE id=:id") abstract suspend fun hasRoute(id: String): Int
     @Query("SELECT * FROM passes WHERE id=:id") abstract suspend fun pass(id: String): SavedPass?
+
+    @Query("SELECT * FROM live_runs ORDER BY createdAt DESC") abstract fun liveRuns(): Flow<List<LiveRun>>
+    @Query("SELECT * FROM live_groups ORDER BY pile, label") abstract fun liveGroups(): Flow<List<LivePileGroup>>
+    @Query("SELECT * FROM live_placements") abstract fun livePlacements(): Flow<List<LivePlacement>>
+    @Query("SELECT COUNT(*) FROM passes") abstract suspend fun totalPasses(): Int
+    @Query("SELECT COUNT(*) FROM passes WHERE status='active' AND id != :parent") abstract suspend fun activePassesExcept(parent: String): Int
+    @Query("SELECT * FROM live_runs WHERE state='active' LIMIT 1") abstract suspend fun activeLiveRun(): LiveRun?
+    @Query("SELECT * FROM live_groups WHERE runId=:run") abstract suspend fun groupsForRun(run: String): List<LivePileGroup>
+    @Query("SELECT * FROM live_placements WHERE copyId=:id") abstract suspend fun placement(id: String): LivePlacement?
+    @Query("SELECT COUNT(*) FROM passes WHERE status='active'") abstract suspend fun activePasses(): Int
+    @Query("UPDATE live_runs SET state='closed' WHERE state='active'") abstract suspend fun closeLiveRuns()
+    @Insert abstract suspend fun insertLiveRun(run: LiveRun)
+    @Insert abstract suspend fun insertLiveGroup(group: LivePileGroup)
+    @Insert abstract suspend fun insertPlacement(placement: LivePlacement)
+    @Query("SELECT * FROM copies WHERE cardId=:card AND status='active' ORDER BY createdAt DESC, id DESC LIMIT 1") abstract suspend fun latestCopy(card: String): CopyRecord?
+    @Query("SELECT COUNT(*) FROM audit WHERE id=:id") abstract suspend fun hasAudit(id: String): Int
+    @Transaction open suspend fun newLiveRun(capacity: Int, grouping: String, catalogVersion: String): LiveRun {
+        require(activePasses() == 0) { "Finish or abandon the active re-sort pass first" }
+        require(capacity in 3..32 && grouping in setOf("PACK", "CYCLE"))
+        closeLiveRuns()
+        val run = LiveRun(UUID.randomUUID().toString(), capacity, grouping, catalogVersion, System.currentTimeMillis())
+        insertLiveRun(run)
+        audit(AuditRecord(UUID.randomUUID().toString(), System.currentTimeMillis(), "START_LIVE_PILES", run.id, "$capacity positions; $grouping; earlier maps retained"))
+        return run
+    }
+    @Transaction open suspend fun confirmAndPlace(card: CatalogCard, event: String, sessionId: String,
+        capacity: Int, grouping: String, exceptionId: String? = null): ConfirmedPlacement? {
+        require(activePasses() == 0) { "Finish or abandon the active re-sort pass before inventorying new cards" }
+        val run = activeLiveRun() ?: run {
+            require(totalPasses() == 0) { "After re-sorting, clear the table and start a fresh live pile map in Piles before adding cards." }
+            newLiveRun(capacity, grouping, card.version)
+        }
+        require(run.catalogVersion == card.version) { "Catalog changed. Clear the table and start a fresh live pile map in Piles." }
+        val groups = groupsForRun(run.id)
+        val id = if (run.grouping == "CYCLE" && card.familyId.isNotBlank()) card.familyId else "pack:${card.pack}"
+        val label = if (run.grouping == "CYCLE" && card.familyName.isNotBlank()) card.familyName else card.packName
+        val route = GrowingPilePlanner.assign(groups.map { LiveGroup(it.groupId, it.label, it.pile) }, id, label, run.capacity)
+        val group = LivePileGroup(run.id, route.id, route.label, route.pile)
+        val added = confirm(card, event, sessionId, exceptionId)
+        if (added) {
+            if (groups.none { it.groupId == id }) insertLiveGroup(group)
+            insertPlacement(LivePlacement(event, run.id, id, group.pile, System.currentTimeMillis()))
+            audit(AuditRecord("pile-$event", System.currentTimeMillis(), "PLACE_NEW_COPY", event, "${run.id}; pile ${group.pile}; ${group.groupId}"))
+        }
+        return if (added || placement(event) != null) ConfirmedPlacement(added, run, group) else null
+    }
+    @Transaction open suspend fun beginPass(pass: SavedPass, parentId: String? = null) {
+        require(activePassesExcept(parentId ?: "") == 0) { "Finish the active re-sort pass first" }
+        closeLiveRuns() // Reusing table positions invalidates the original live table layout.
+        if (parentId != null) completePass(parentId)
+        savePass(pass)
+        audit(AuditRecord(UUID.randomUUID().toString(), System.currentTimeMillis(), "START_RESORT_PASS", pass.id, "Source map frozen; prior live map closed. Clear table before future live inventory."))
+    }
+    @Transaction open suspend fun adjustQuantity(card: CatalogCard, delta: Int, event: String, sessionId: String): Boolean {
+        require(delta in setOf(-1, 1))
+        require(activePasses() == 0) { "Finish or abandon the active re-sort pass before editing quantities" }
+        if (hasAudit("adjust-$event") > 0) return false
+        var copyId = event
+        if (delta > 0) {
+            if (addCopy(CopyRecord(event, card.id, card.title, card.pack, card.packName, card.version, card.source,
+                System.currentTimeMillis(), sessionId, "QUANTITY_ADJUSTMENT")) == -1L) return false
+        } else {
+            val copy = latestCopy(card.id) ?: return false
+            copyId = copy.id
+            if (voidCopy(copy.id) == 0) return false
+        }
+        audit(AuditRecord("adjust-$event", System.currentTimeMillis(), "ADJUST_QUANTITY", card.id, "delta=$delta; copy=$copyId; collection edit does not route a physical card"))
+        return true
+    }
 
     @Transaction open suspend fun importCards(cards: List<CatalogCard>) {
         require(cards.isNotEmpty() && cards.map { it.id }.toSet().size == cards.size)
@@ -101,10 +184,21 @@ abstract class Store {
 }
 
 @Database(entities = [CatalogCard::class, CopyRecord::class, ExceptionRecord::class, AuditRecord::class,
-    SessionRecord::class, SavedPass::class, RouteRecord::class], version = 1, exportSchema = true)
+    SessionRecord::class, SavedPass::class, RouteRecord::class, LiveRun::class, LivePileGroup::class, LivePlacement::class], version = 2, exportSchema = true)
 abstract class ScanDatabase : RoomDatabase() {
     abstract fun store(): Store
-    companion object { fun open(context: Context) = Room.databaseBuilder(context, ScanDatabase::class.java, "arkhamscan.db").build() }
+    companion object {
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE cards ADD COLUMN familyId TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE cards ADD COLUMN familyName TEXT NOT NULL DEFAULT ''")
+                db.execSQL("CREATE TABLE IF NOT EXISTS live_runs (id TEXT NOT NULL, capacity INTEGER NOT NULL, grouping TEXT NOT NULL, catalogVersion TEXT NOT NULL, createdAt INTEGER NOT NULL, state TEXT NOT NULL, PRIMARY KEY(id))")
+                db.execSQL("CREATE TABLE IF NOT EXISTS live_groups (runId TEXT NOT NULL, groupId TEXT NOT NULL, label TEXT NOT NULL, pile INTEGER NOT NULL, PRIMARY KEY(runId, groupId))")
+                db.execSQL("CREATE TABLE IF NOT EXISTS live_placements (copyId TEXT NOT NULL, runId TEXT NOT NULL, groupId TEXT NOT NULL, pile INTEGER NOT NULL, at INTEGER NOT NULL, PRIMARY KEY(copyId))")
+            }
+        }
+        fun open(context: Context) = Room.databaseBuilder(context, ScanDatabase::class.java, "arkhamscan.db").addMigrations(MIGRATION_1_2).build()
+    }
 }
 
 object CatalogImporter {
@@ -122,7 +216,7 @@ object CatalogImporter {
             val c = cards.getJSONObject(i)
             fun field(k: String): String = c.getString(k).trim().also { require(it.isNotEmpty() && it.length <= 500) { "Invalid $k at card $i" } }
             CatalogCard(field("id"), field("title"), c.optString("number"), field("pack"), field("packName"),
-                c.optString("type"), c.optString("encounter"), source, version)
+                c.optString("type"), c.optString("encounter"), source, version, c.optString("familyId"), c.optString("familyName"))
         }.also { require(it.map { c -> c.id }.toSet().size == it.size) { "Duplicate printing IDs" } }
     }
 }

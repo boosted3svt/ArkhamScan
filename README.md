@@ -7,7 +7,7 @@ validation has not yet been performed.
 
 ## Download the Android alpha
 
-[Download ArkhamScan 0.2.0 alpha (debug APK)](https://github.com/boosted3svt/ArkhamScan/raw/refs/heads/main/downloads/ArkhamScan-0.2.0-alpha-debug.apk)
+[Download ArkhamScan 0.3.0 alpha (debug APK)](https://github.com/boosted3svt/ArkhamScan/raw/refs/heads/main/downloads/ArkhamScan-0.3.0-alpha-debug.apk)
 
 Transfer the APK to your phone and open it to install. Android may ask you to allow
 installation from the browser or file manager you selected. This is a development
@@ -22,14 +22,20 @@ The APK's SHA-256 is recorded in [downloads/SHA256SUMS](downloads/SHA256SUMS).
   then search it offline. No file preparation is required. Local import is optional.
 - Open a card’s live ArkhamDB page in your browser to inspect the reference artwork
   and details. Images are not downloaded or retained by this app.
-- Explicitly confirm physical copies, including legitimate extras; audited undo and
-  idempotent transactions keep repeated actions from inflating ownership.
+- Hold camera suggestions through OCR dropouts until selection or **Next card / retry**.
+- Explicitly confirm physical copies, including legitimate extras, and hear/see
+  **Pile N** immediately. Copy confirmation and pile placement are one transaction.
+- Adjust collection quantities with **+ / −**, including returning a zero-count
+  printing to the collection. Every change is audited; retries cannot double-apply.
 - Experimental live OCR offers title candidates. Rapid presentations queue metadata
   and say “Re-sort”; no uncertain recognition creates an owned copy or interrupts
   rapid scanning with a dialog.
 - Review the physical Re-sort pile separately from pending metadata records.
-- Simulate bounded pile plans, freeze source quantities, route existing copies
-  without changing ownership, and subdivide groups in later saved passes.
+- Grow a stable live pile map as new groups are scanned. Choose reference-pack or
+  cycle/chapter grouping, with bounded mixed-pile overflow and a reserved Re-sort
+  position. Split mixed/cycle piles in later count-preserving passes.
+- Simulate bounded re-sort plans and freeze their source quantities, routing
+  existing copies without changing ownership.
 - Export collection CSV and versioned JSON including copy history, attempts, source
   hashes, sessions, pass maps, routes, and audit events.
 
@@ -62,18 +68,25 @@ The existing checkouts are already isolated; do not create Git worktrees for set
 
 ## Get started with ArkhamDB
 
-1. Install the **0.2.0 alpha** APK above over the first alpha; it uses the same
-   development signing key and database schema. Keep your existing inventory.
+1. Install the **0.3.0 alpha** APK above over the previous alpha. It uses the same
+   development signing key and migrates schema 1 to schema 2 without clearing your
+   cards, copies, corrections, or pending attempts.
 2. With internet available, open **Overview** and tap **Download from ArkhamDB**.
    The app fetches ArkhamDB’s public packs and cards APIs, with encounter cards
    included, and saves the selected metadata locally. No account or API key needed.
-3. Go to **Scan**. **Interactive** is selected by default. Search the title or use
+3. In **Settings**, choose table capacity (including Re-sort). In **Piles**, choose
+   reference-pack or cycle/chapter grouping. Refresh ArkhamDB once after upgrading
+   if you want the newly added cycle metadata; existing catalogs still sort by pack.
+4. Go to **Scan**. **Interactive** is selected by default. Search the title or use
    camera OCR for suggestions, then select the exact printing. **View card on
    ArkhamDB** opens its live website page in your browser for comparison.
-4. Confirm **New physical copy** once for each physical copy you hold. Use
-   **Collection** to check counts, undo errors, and export.
-5. Use **Piles** after recording inventory to plan and perform count-preserving
-   sorting passes. Rapid mode currently routes every camera presentation to Re-sort;
+5. Confirm **New physical copy** once for each physical copy you hold. The app
+   displays and speaks **Pile N**; put that card in that numbered physical pile.
+   Suggestions stay fixed while you read/tap. After confirmation, remove/change the
+   card; **Next card / retry** explicitly clears held candidates for a fresh attempt.
+6. Use **Collection** to adjust counts with **+ / −** and export. Edits update owned
+   quantities only, not physical placements. A zero-count row remains available.
+7. Use **Piles** to inspect the growing map and split a mixed/cycle pile later. Rapid mode currently routes every camera presentation to Re-sort;
    it is not yet the finished hands-free recognition workflow.
 
 Use **Settings → Refresh from ArkhamDB** for later updates. Failed downloads keep
@@ -108,6 +121,43 @@ are optional strings. Import replaces only the current reference catalog. Existi
 copy history and catalog hashes survive. Imports are transactional, limited to
 16 MiB / 50,000 cards, and reject duplicate IDs.
 
+## Live sorting and bounded table space
+
+The first confirmation starts a live map automatically. Groups get stable slots
+in first-seen order. At capacity 5, piles 1–3 are dedicated groups, pile 4 is the
+mixed-groups holding pile, and position 5 is Re-sort. Additional groups join the
+mixed pile; old destinations are never silently renumbered or redistributed.
+This online heuristic favors stable instructions and bounded space, not a claim
+of globally optimal sorting before the collection distribution is known.
+
+- **Retail reference pack** keeps source pack identities separate.
+- **ArkhamDB cycle / chapter** combines packs sharing source cycle/chapter metadata.
+  It falls back to packs if metadata is absent. Broad standalone, Return To, promo,
+  and investigator-deck categories are not treated as one campaign. Cycle labels
+  use the first source pack's name and are explicitly group labels.
+- Membership in a source group is not proof of the exact historical box purchased;
+  identical reprints can remain ambiguous. No complete-retail-manifest claim is made.
+
+Capacity, grouping, and catalog version freeze when a map starts. To change them,
+clear/set aside the existing table and choose **Start fresh live pile map**. Old
+maps and placements remain in the audit export. A changed catalog requires a fresh
+map so historical routing rules cannot silently change.
+
+For a mixed or broad cycle pile, select **Split Pile N by reference pack**. Pick up
+that specific source pile and set other physical piles aside before clearing and
+reusing table positions. The app snapshots only the active copies placed in that
+source pile. Route them in **Re-sort** mode without incrementing ownership. Further
+subdivisions use the existing bounded pass planner. Starting a re-sort closes the
+live table map because its positions are being reused. Finish or abandon the active
+re-sort before new inventory confirmations or quantity edits. Before inventorying
+new cards afterward, clear the table and explicitly start a fresh live map; this
+prevents old pile numbers from silently referring to a different physical layout.
+
+Cards counted before live sorting, and copies added via quantity editing, have no
+automatically asserted physical placement. Use the separate existing-inventory
+re-sort workflow for them. Physical reconciliation still matters: software cannot
+tell identical copies apart or know whether you moved a card to its announced pile.
+
 ## Inventory safeguards
 
 The camera never silently adds inventory in this alpha. Fully remove the card
@@ -137,11 +187,11 @@ capture. Exports use Android's user-selected document picker.
 
 - `core/`: platform-free routing policy, presentation gate, retail model,
   verified-only completeness, planner/simulator, and source-count ledger.
-- `app/`: Compose screens, bundled OCR analyzer, Room database (schema v1),
+- `app/`: Compose screens, bundled OCR analyzer, Room database (schema v2),
   transactional decisions, audio, public ArkhamDB metadata download, optional local
   catalog import, browser reference links, and exports.
-- `app/schemas/`: Room's generated schema for future migrations. This is the initial
-  schema; no upgrade migration is claimed or tested yet.
+- `app/schemas/`: exported Room schemas 1 and 2. A real version-1 database fixture
+  is migrated and checked for retained cards, copies, and pending exceptions.
 - Tests: JVM domain tests and Robolectric tests exercising real Room transactions,
   persistence/reopen, catalog replacement, sorting, and import validation.
 
@@ -155,4 +205,4 @@ the same owner-held key for upgrades. No release key has been created here.
 
 Before production use: resolve catalog/image rights, verify product manifests,
 benchmark legitimate specimens, test camera/audio/privacy/thermal behavior on the
-phone, add restorable backup and upgrade migrations, and complete release testing.
+phone, add restorable backup and future upgrade migrations, and complete release testing.

@@ -49,6 +49,21 @@ class ArkhamDbCatalogTest {
         val card = """{"code":"1","name":"Test","pack_code":"p"}"""
         try { ArkhamDbCatalog.parse("[$card,$card]".toByteArray(), packs); fail("Duplicate IDs must be rejected") } catch (_: IllegalArgumentException) {}
     }
+    @Test fun cycleMembershipComesFromPackMetadataAndKeepsChaptersDistinct() {
+        val packData = """[{"code":"p","name":"Test campaign","cycle_position":2,"position":1,"chapter":1},
+            {"code":"q","name":"Test mythos","cycle_position":2,"position":2,"chapter":1},
+            {"code":"r","name":"Other chapter","cycle_position":2,"position":1,"chapter":2}]""".toByteArray()
+        val data = """[{"code":"1","name":"One","pack_code":"p"},{"code":"2","name":"Two","pack_code":"q"},{"code":"3","name":"Three","pack_code":"r"}]""".toByteArray()
+        val parsed = ArkhamDbCatalog.parse(data, packData)
+        assertEquals(parsed[0].familyId, parsed[1].familyId)
+        assertEquals(parsed[0].familyName, parsed[1].familyName)
+        assertNotEquals(parsed[0].familyId, parsed[2].familyId)
+    }
+    @Test fun broadPromoOrStandaloneCategoriesDoNotPretendToBeOneCampaign() {
+        val packData = """[{"code":"p","name":"Test standalone","cycle_position":70,"position":1}]""".toByteArray()
+        val parsed = ArkhamDbCatalog.parse("""[{"code":"1","name":"One","pack_code":"p"}]""".toByteArray(), packData)
+        assertEquals("", parsed.single().familyId)
+    }
     @Test fun apiFailureIsSurfacedWithoutInventingCatalogData() {
         try { ArkhamDbCatalog { error("network unavailable") }.download(); fail("Must report failure") }
         catch (e: IllegalStateException) { assertEquals("network unavailable", e.message) }

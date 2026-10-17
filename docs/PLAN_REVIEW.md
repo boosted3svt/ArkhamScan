@@ -51,3 +51,27 @@ Nonblocking defaults: English-language OCR, one local collection, five proposed
 physical positions editable in settings, local Storage Access Framework exports,
 foreground active-screen camera. Other languages, cloud sync, and analytics are not
 introduced.
+
+## v0.3 field-feedback changes
+
+Frame-by-frame candidate replacement caused reported tap/read flicker. A tested
+presentation latch now requires repeated observations, then holds its entire list
+through dropouts until selection or explicit retry. It is a UI stability mechanism,
+not a calibrated recognition confidence score. Rapid exception metadata uses fresh
+frame candidates rather than the held display list.
+
+Collection +/- edits are transactional and audited, cannot go below zero, preserve
+zero-count rows, and never assert a physical placement. Explicit scan confirmation
+now atomically creates one copy and one live placement, followed by “Pile N.”
+
+Live group slots remain stable under unknown future input. Table overflow goes to
+a designated mixed pile, with a specific source-count snapshot for later splitting.
+This trades some re-scans for stable numbers and bounded table use. A new map needs
+a cleared table; active re-sort passes block conflicting new inventory/edits.
+Reference-pack and source cycle/chapter groups are useful provisional destinations,
+not claims of original purchased-box provenance.
+
+Starting a re-sort closes the prior live table map. Additional source piles remain
+inspectable in that saved map; previously processed sources cannot accidentally
+start duplicate passes. After re-sorting, new inventory requires an explicit fresh
+map on a cleared table, so old destinations cannot silently resume on reused slots.

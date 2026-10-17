@@ -21,6 +21,8 @@ class ArkhamDbCatalog(private val get: (String) -> ByteArray = ::downloadJson) {
         fun parse(cardsBytes: ByteArray, packsBytes: ByteArray): List<CatalogCard> {
             require(cardsBytes.size <= CatalogImporter.MAX_BYTES && packsBytes.size <= CatalogImporter.MAX_BYTES) { "ArkhamDB response exceeds size limit" }
             val packs = JSONArray(packsBytes.toString(Charsets.UTF_8))
+            val packRecords = (0 until packs.length()).map { packs.getJSONObject(it) }
+            val families = packRecords.filter { it.has("cycle_position") }.groupBy { "${it.optInt("chapter", 1)}:${it.getInt("cycle_position")}" }
             val names = (0 until packs.length()).associate { i -> packs.getJSONObject(i).let { it.getString("code") to it.getString("name") } }
             require(names.isNotEmpty()) { "ArkhamDB returned no packs" }
             val cards = JSONArray(cardsBytes.toString(Charsets.UTF_8))
@@ -32,11 +34,16 @@ class ArkhamDbCatalog(private val get: (String) -> ByteArray = ::downloadJson) {
                 val code = c.getString("code")
                 require(code.matches(Regex("[A-Za-z0-9_-]{1,64}"))) { "Invalid ArkhamDB card code" }
                 val pack = c.getString("pack_code")
+                val packInfo = packRecords.firstOrNull { it.getString("code") == pack }
+                val familyKey = packInfo?.takeIf { it.has("cycle_position") && it.getInt("cycle_position") !in setOf(50, 60, 61, 70, 80, 90) }?.let { "${it.optInt("chapter", 1)}:${it.getInt("cycle_position")}" }
+                val family = familyKey?.let { key -> families[key]?.sortedWith(compareBy<JSONObject> { it.optInt("position", Int.MAX_VALUE) }.thenBy { it.getString("code") })?.firstOrNull() }
                 val packName = names[pack] ?: error("Unknown ArkhamDB pack: $pack. Previous catalog kept; try updating later.")
                 normalized.put(JSONObject().put("id", "arkhamdb:$code").put("title", c.getString("name"))
                     .put("number", if (c.isNull("position")) "" else c.get("position").toString())
                     .put("pack", pack).put("packName", packName).put("type", c.optString("type_code", ""))
-                    .put("encounter", c.optString("encounter_code", "")))
+                    .put("encounter", c.optString("encounter_code", ""))
+                    .put("familyId", familyKey?.let { "arkhamdb-cycle:$it" } ?: "")
+                    .put("familyName", family?.getString("name")?.let { "$it · cycle group" } ?: ""))
             }
             // Deliberately omit image URLs/bytes, rules, flavor, deck limits and expected quantities.
             val catalog = JSONObject().put("schemaVersion", 1).put("source", CARDS_URL).put("cards", normalized)
@@ -61,7 +68,7 @@ private fun downloadJson(address: String): ByteArray {
             connection.instanceFollowRedirects = false
             connection.useCaches = false
             connection.setRequestProperty("Accept", "application/json")
-            connection.setRequestProperty("User-Agent", "ArkhamScan/0.2.0 (personal collection catalog)")
+            connection.setRequestProperty("User-Agent", "ArkhamScan/0.3.0 (personal collection catalog)")
             val status = connection.responseCode
             if (status in listOf(301, 302, 303, 307, 308)) {
                 val next = URL(url, connection.getHeaderField("Location") ?: error("Missing redirect target"))

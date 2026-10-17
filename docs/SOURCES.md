@@ -43,3 +43,14 @@ Live cloud requests currently receive a proxy CONNECT 403, so this is a cloud
 network restriction rather than a measured ArkhamDB service response. Domain
 additions (`arkhamdb.com`, `www.arkhamdb.com`) are saved in the environment draft
 for later application. Phone connectivity does not depend on that cloud draft.
+
+## v0.3 cycle / chapter grouping
+
+Optional `cycle_position`, `chapter`, and pack `position` fields from the existing
+public packs response determine cycle/chapter membership and a first-pack display
+label. No additional endpoint or guessed title-to-product map is used. Source
+category positions 50/60/61/70/80/90 (Return To, investigator decks, standalones,
+promos, parallel) fall back to individual packs instead of grouping unrelated
+products as one campaign. Missing metadata also falls back to pack identity. The
+new family fields are retained in schema 2; old catalogs get empty defaults until
+refresh. Historical copy snapshots and prior pile rules remain unchanged.

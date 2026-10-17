@@ -21,6 +21,14 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     val exceptions = store.exceptions().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val passes = store.passes().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val routes = store.routes().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val liveRuns = store.liveRuns().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val liveGroups = store.liveGroups().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val livePlacements = store.livePlacements().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val liveGrouping = MutableStateFlow("PACK")
+    val lastPile = MutableStateFlow<String?>(null)
+    val waitingForRemoval = MutableStateFlow(false)
+    private val candidateLatch = CandidateLatch()
+    private var latestCandidates: List<CatalogCard> = emptyList()
     val databaseReady = MutableStateFlow(false)
     val message = MutableStateFlow("Tap Download from ArkhamDB to get started.")
     val downloadingCatalog = MutableStateFlow(false)
@@ -39,6 +47,7 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     init {
         viewModelScope.launch { cards.collect { list -> recognitionIndex = list.map { it to it.title.lowercase().replace(nonWord, " ").trim() } } }
         capacity.value = preferences.getInt("capacity", 5)
+        liveGrouping.value = preferences.getString("liveGrouping", "PACK") ?: "PACK"
         silent.value = preferences.getBoolean("silent", false)
         speechRate.value = preferences.getFloat("speechRate", 1f)
         work { store.session(SessionRecord(sessionId, System.currentTimeMillis(), "Collection session")); databaseReady.value = true }
@@ -87,13 +96,39 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     /** OCR supplies suggestions only. No confidence calibration or image identity is fabricated. */
     fun recognizedText(text: String) {
         val normalized = " " + text.lowercase().replace(nonWord, " ").trim() + " "
-        suggestions.value = recognitionIndex.asSequence().filter { (_, title) ->
+        latestCandidates = recognitionIndex.asSequence().filter { (_, title) ->
             title.length >= 4 && normalized.contains(" $title ")
         }.take(8).map { it.first }.toList()
+        val heldIds = candidateLatch.observe(latestCandidates.map { it.id }, android.os.SystemClock.elapsedRealtime())
+        val byId = cards.value.associateBy { it.id }
+        suggestions.value = heldIds.mapNotNull { byId[it] }
+        waitingForRemoval.value = candidateLatch.waitingForRemoval
     }
+    fun nextCard() {
+        lastPile.value = null
+        candidateLatch.next(); suggestions.value = emptyList(); latestCandidates = emptyList(); waitingForRemoval.value = false
+    }
+    fun setLiveGrouping(grouping: String) {
+        require(grouping in setOf("PACK", "CYCLE"))
+        liveGrouping.value = grouping
+        preferences.edit().putString("liveGrouping", grouping).apply()
+    }
+    fun startFreshPiles() = work {
+        val version = cards.value.firstOrNull()?.version ?: error("Download a reference catalog first")
+        store.newLiveRun(capacity.value, liveGrouping.value, version)
+        lastPile.value = null
+        message.value = "Fresh live map started. Use the cleared table; prior maps and ownership are retained."
+    }
+    fun adjustQuantity(card: CatalogCard, delta: Int, event: String = UUID.randomUUID().toString()) = work {
+        if (store.adjustQuantity(card, delta, event, sessionId)) {
+            val count = store.quantity(card.id)
+            message.value = "${card.title}: $count owned. Quantity edits do not place a physical card in a pile."
+        }
+    }
+
     fun queuePresentation() = work {
         val id = UUID.randomUUID().toString()
-        val candidates = JSONArray(suggestions.value.map { it.id }).toString()
+        val candidates = JSONArray(latestCandidates.map { it.id }).toString()
         val pass = passes.value.firstOrNull { it.status == "active" }?.id
         store.addException(ExceptionRecord(id, sessionId, System.currentTimeMillis(), "UNVALIDATED_OCR", candidates, passId = pass))
         message.value = "Re-sort · OCR is experimental; ownership unchanged"
@@ -101,16 +136,23 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     }
     fun confirm(card: CatalogCard, event: String, exceptionId: String? = null) = work {
         require(mode.value != Mode.RESORT_EXISTING) { "Re-sort mode cannot create owned copies" }
-        if (store.confirm(card, event, sessionId, exceptionId)) {
-            message.value = "Added ${card.title} · physical copy confirmed. Retail origin unverified."
-            if (!silent.value) cues.tryEmit("Copy confirmed")
+        val placement = store.confirmAndPlace(card, event, sessionId, capacity.value, liveGrouping.value, exceptionId)
+        if (placement?.added == true) {
+            val mixed = placement.group.pile == placement.run.capacity - 1
+            val destination = if (mixed) "mixed groups · split this pile later" else placement.group.label
+            lastPile.value = "Pile ${placement.group.pile} · $destination"
+            message.value = "${card.title} added. Place it in Pile ${placement.group.pile} — $destination."
+            candidateLatch.consume(setOf(card.id)); suggestions.value = emptyList(); waitingForRemoval.value = true
+            if (!silent.value) cues.tryEmit("Pile ${placement.group.pile}")
         }
     }
+
     fun dismiss(id: String, decision: String) = work { store.dismiss(id, decision); message.value = "Decision saved · ownership unchanged" }
     fun undo(id: String) = work { store.undo(id); message.value = "Copy removed · audit record retained" }
 
-    fun makePlan(source: String = "inventoried collection", parent: SavedPass? = null, pile: Int? = null) = work {
-        val active = copies.value.filter { it.status == "active" }
+    fun makePlan(source: String = "inventoried collection", parent: SavedPass? = null, pile: Int? = null, liveSource: Pair<String, Int>? = null) = work {
+        val sourceIds = liveSource?.let { (runId, number) -> livePlacements.value.filter { it.runId == runId && it.pile == number }.map { it.copyId }.toSet() }
+        val active = copies.value.filter { it.status == "active" && (sourceIds == null || it.id in sourceIds) }
         require(active.isNotEmpty()) { "Confirm physical copies before planning a sorting pass" }
         val sourceCounts: Map<String, Int>
         val cardPacks: Map<String, String>
@@ -138,15 +180,19 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
             previous.optString("parentId") == parent.id && previous.optInt("sourcePile", -1) == pile
         }) { "This source pile already has a saved child pass. Resume it instead." }
         val plan = PilePlanner.plan(ds, capacity.value, source, parent?.id ?: "root")
-        val json = JSONObject().put("version", plan.version).put("source", source).put("capacity", plan.capacity)
+        if (liveSource != null) require(passes.value.none {
+            val previous = JSONObject(it.json)
+            it.status != "abandoned" && previous.optString("liveRunId") == liveSource.first && previous.optInt("livePile", -1) == liveSource.second
+        }) { "This source pile already has a saved re-sort pass" }
+        val json = JSONObject().put("liveRunId", liveSource?.first ?: JSONObject.NULL).put("livePile", liveSource?.second ?: JSONObject.NULL).put("version", plan.version).put("source", source).put("capacity", plan.capacity)
             .put("parentId", parent?.id ?: JSONObject.NULL).put("sourcePile", pile ?: JSONObject.NULL)
             .put("instructions", plan.instructions).put("sourceCounts", JSONObject(sourceCounts)).put("cardPacks", JSONObject(cardPacks))
             .put("piles", jsonArray(plan.piles.map { p -> JSONObject().put("number", p.number).put("destinations", jsonArray(p.destinations.map {
                 JSONObject().put("id", it.id).put("label", it.label).put("quantity", it.quantity)
             })) }))
-        if (parent != null) store.completePass(parent.id)
-        store.savePass(SavedPass(UUID.randomUUID().toString(), json.toString(), System.currentTimeMillis()))
+        store.beginPass(SavedPass(UUID.randomUUID().toString(), json.toString(), System.currentTimeMillis()), parent?.id)
         mode.value = Mode.RESORT_EXISTING
+        lastPile.value = null
         message.value = "Sorting pass frozen. Catalog packs are provisional destinations, not verified retail products."
     }
     fun abandonPass(pass: SavedPass) = work {
@@ -169,6 +215,7 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
             (0 until ds.length()).any { ds.getJSONObject(it).getString("id") == pack }
         }?.getInt("number") ?: error("Card is outside this source pile")
         if (store.route(RouteRecord(event, pass.id, cardId, pile, System.currentTimeMillis()))) {
+            lastPile.value = "Pile $pile · existing copy routed"
             message.value = "Pile $pile · existing copy routed; ownership unchanged"
             if (!silent.value) cues.tryEmit("Pile $pile")
         }
@@ -177,6 +224,9 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
         return JSONObject().put("schemaVersion", 1).put("exportedAt", System.currentTimeMillis())
             .put("catalogSource", cards.value.firstOrNull()?.source ?: JSONObject.NULL)
             .put("copies", jsonArray(copies.value.map { it.toJson() }))
+            .put("liveRuns", jsonArray(liveRuns.value.map { JSONObject().put("id", it.id).put("capacity", it.capacity).put("grouping", it.grouping).put("catalogVersion", it.catalogVersion).put("createdAt", it.createdAt).put("state", it.state) }))
+            .put("liveGroups", jsonArray(liveGroups.value.map { JSONObject().put("runId", it.runId).put("groupId", it.groupId).put("label", it.label).put("pile", it.pile) }))
+            .put("livePlacements", jsonArray(livePlacements.value.map { JSONObject().put("copyId", it.copyId).put("runId", it.runId).put("groupId", it.groupId).put("pile", it.pile).put("at", it.at) }))
             .put("exceptions", jsonArray(exceptions.value.map { JSONObject().put("id", it.id).put("sessionId", it.sessionId)
                 .put("at", it.createdAt).put("reason", it.reason).put("candidates", JSONArray(it.candidates)).put("status", it.status).put("passId", it.passId) }))
             .put("passes", jsonArray(passes.value.map { JSONObject().put("id", it.id).put("status", it.status).put("plan", JSONObject(it.json)) }))

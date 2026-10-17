@@ -1,62 +1,78 @@
-# Validation — 0.2.0 alpha (2026-10-17)
-
-Prepared with JDK 21, Gradle 8.13, Android SDK 35 and build tools 35.0.0.
+# Validation — 0.3.0 alpha (2026-10-17)
 
 | Check | Result |
 | --- | --- |
-| Domain tests | 6 passed |
-| Android / Room / API-parser / UI tests | 23 passed |
+| Domain tests | 10 passed |
+| Android / Room / API-parser / UI tests | 33 passed |
 | Python catalog converter | 2 passed |
-| Debug APK build | Passed |
-| Unsigned release APK build | Passed |
+| Debug / unsigned release APK builds | Passed |
 | Debug lint / release vital lint | Passed with warnings, no errors |
-| Debug APK signature | Verified; same certificate as 0.1.0 for in-place updates |
-| Network policy in merged manifest | INTERNET enabled for optional metadata refresh; cleartext disabled |
-| Camera permissions / processing | Camera permission still optional; OCR stays on-device |
+| Debug APK signature | Verified; same signer as 0.1 and 0.2 for in-place updates |
+| Database upgrade | Real schema-1 database migrated to schema 2 with cards, active copies, and pending attempts retained |
 
-Total: 31 automated tests passed, no failed/skipped/error cases.
+Total: 45 automated tests passed, no failed/skipped/error cases.
+Executed with JDK 21, Gradle 8.13, SDK 35/build tools 35.0.0:
+`./gradlew :core:test :app:testDebugUnitTest :app:assembleDebug :app:assembleRelease :app:lintDebug`
+and `python3 -m unittest discover -s tools/tests -v`.
 
-Executed `./gradlew :core:test :app:testDebugUnitTest :app:assembleDebug
-:app:assembleRelease :app:lintDebug` and the Python importer suite. Room's schema
-remains version 1; no schema migration or destructive reset is required for this
-update. Existing confirmation, concurrency, undo, recovery, ambiguity, bounded
-planning (5/50/500 destinations), and count-preserving sorting tests still pass.
-New tests cover metadata requests including encounter cards, filtering hidden
-records, omission of illustrations/rules from cached data, provenance hashes,
-malformed catalog rejection, fixed-host reference links, first-run online setup,
-actual Room persistence after a simulated download, and keeping previous catalog
-and ownership on refresh failure.
+## Reported camera flicker
 
-## Live service limitation
+CandidateLatch requires repeated observations, then freezes the complete candidate
+list through empty/noisy frames, including its ordering. It clears on explicit
+Next card/retry or successful confirmation. Stationary confirmed cards are
+suppressed until removal/change or explicit retry. No recognition-confidence
+calibration is inferred from a display latch. Raw fresh-frame candidates remain
+separate for rapid-mode exception records. The Compose workflow test verifies a
+held candidate survives a simulated OCR dropout and remains selectable.
 
-This cloud machine's proxy returns CONNECT 403 for arkhamdb.com. This is not a
-measured response from ArkhamDB itself. The endpoint paths and encounter flag were
-verified against Kamalisk/arkhamdb's public routing/controller source; API-shaped
-fixtures exercise parser, UI, failure and persistence behavior. A real live API
-response and physical-phone download have **not** been verified. The app reports
-connection errors without clearing saved data. Domain additions are saved in the
-environment draft; saving does not apply them to this running machine.
+## Quantity editing
 
-## Privacy and reference behavior
+Collection +/- edits are transactional, audited, retry-idempotent and bounded at
+zero. Zero-count rows remain editable. Edits change ownership without generating
+physical placement records. The end-to-end Compose test confirms one copy, checks
+the visible Pile 1 result, increments ownership to 2, decrements to 1, and verifies
+only one actual scan placement exists. Active re-sort passes block conflicting
+quantity changes; UI explains how to finish/abandon them first.
 
-The catalog client performs public HTTPS GETs for card/pack metadata. It receives
-JSON in memory and stores only selected factual fields and a provenance hash.
-Artwork URLs/bytes and rules/flavor text are not retained. Reference-card links
-open the source website in the external browser. The catalog client has no access
-to CameraX frames; camera images are neither stored nor uploaded by it.
+## Live pile routing
 
-This replaces the 0.1.0 alpha's no-INTERNET configuration. Optional online catalog
-refresh is now supported, with offline metadata caching; the user does not need to
-create or supply a local database file.
+Confirmation atomically commits the copy, stable group assignment, placement and
+audit record. Retries cannot create another copy or placement. Bounded live maps
+were tested through 500 groups at several capacities. Dedicated slots retain
+their groups; additional groups use the last numbered mixed pile, with the final
+physical position reserved for Re-sort. Settings/catalog changes cannot silently
+alter a live map. Pack metadata supplies optional source cycle/chapter grouping;
+broad standalone/promo/Return To/deck categories fall back to individual packs.
 
-## Still not established
+A follow-up pass snapshots only active copies actually placed in its selected
+source pile. Tests verify unrelated inventory is excluded and ownership stays
+unchanged. Starting a re-sort closes the prior live table layout. An explicit
+fresh map on a cleared table is required before live inventory resumes. Historical
+maps and source ledgers remain stored; no original purchased-box certainty or
+mathematically optimal online assignment is claimed.
 
-No real-card recognition accuracy, S26 Ultra camera/audio/thermal benchmark,
-reference-image matching, verified retail manifests, restorable backup, or
-schema-upgrade migration is claimed. Automatic inventory acceptance stays disabled.
-Interactive mode is now the default. Rapid OCR routes presentations to Re-sort.
+## Persistence and migration
+
+Schemas 1 and 2 are exported in app/schemas. The migration test constructs the old
+database from its actual exported schema, adds representative card/copy/exception
+records, opens it with the new Room database and validates retained contents.
+Room's own schema validation checks the upgraded tables. There is no destructive
+migration fallback. UI fixtures are seeded before activity startup to avoid racing
+Room's first observer registration in Robolectric; subsequent count edits exercise
+live flow updates and visible controls.
+
+## Limits
+
+No physical S26 Ultra camera/audio/thermal run or measured card-recognition accuracy
+was performed in this cloud workspace. OCR remains suggestion-only, with explicit
+copy confirmation. Retail completeness and restorable backup are still unfinished.
+Public API parser/persistence tests pass, but live ArkhamDB access from this cloud
+was blocked by the proxy in prior validation. Optional metadata fetch and browser
+reference links remain available; no camera images are stored or uploaded by the
+catalog client. Camera frames are not retained to hold suggestions.
 
 ## Download checksums
 
 - `downloads/ArkhamScan-0.1.0-alpha-debug.apk`: SHA-256 `b575d8e915c586957c65f09984659f0be8907c73d192d22f2bdbebba8cce5b75`
 - `downloads/ArkhamScan-0.2.0-alpha-debug.apk`: SHA-256 `0b54f5566590debc1f3850e9f6c215a4402a9d7dcefdc4e185b4664b466008a0`
+- `downloads/ArkhamScan-0.3.0-alpha-debug.apk`: SHA-256 `aa2d1ccd90c6ac6837498f2a5aae233ed4d1b483eddf54f90162879f1f5c371e`
