@@ -1,4 +1,4 @@
-# Remote browser desk — 0.5.0 alpha
+# Remote browser desk — 0.5.1 alpha
 
 The phone hosts the interface over local HTTP. Camera/OCR, collection storage,
 command results, audit and physical pile rules stay on the phone. No Windows or
@@ -6,7 +6,7 @@ Ubuntu installation is needed. Camera frames are not streamed or stored.
 
 ## Start a mounted-phone session
 
-1. Install 0.5.0 over the previous alpha. Its signing certificate is unchanged;
+1. Install 0.5.1 over the previous alpha. Its signing certificate is unchanged;
    schema 4 adds a command-result journal without clearing existing inventory.
 2. Open Scan and grant camera permission once if needed. Download/refresh the
    ArkhamDB index if you have not already done so.
@@ -14,8 +14,7 @@ Ubuntu installation is needed. Camera frames are not streamed or stored.
    **Run web server**. Put the phone on power, mount it, and leave ArkhamScan open
    and unlocked. The app keeps its screen awake while remote mode is enabled.
 4. Connect the computer to the same network. Open the phone's displayed
-   `http://IP:port` address and enter its pairing code. One browser controller is
-   paired at a time; the cookie survives a page reload for up to eight hours.
+   `http://IP:port` address. The desk opens directly, without a code, login or cookie.
 5. Click **Start scanning** in the browser. Status progresses from starting to
    camera-ready/scanning, or explains the blocker. Preview is optional: the phone
    can remain on Overview while the browser controls capture. The native Scan
@@ -48,7 +47,7 @@ relaunch a killed phone process.
   printing coverage and source gaps have the same limits as the native app.
 - Review & recovery: uncertain-attempt identification, already-counted/defer,
   camera/OCR restart, metadata retry, browser resynchronization, recent app errors,
-  diagnostic downloads, next-map settings and controller release.
+  diagnostic downloads, next-map settings.
 
 A linked uncertain attempt is a user-reviewed association, not evidence that it
 represents a unique physical card. Cancel attempt review or Next card to clear it.
@@ -76,8 +75,7 @@ silently replays confirmations. The phone retains command outcomes across app
 restarts. JSON audit exports include command IDs, hashes and saved results.
 
 Errors appear with their details and recovery controls. Diagnostics contain app
-version, capture/foreground state, recent errors and command IDs; they omit pairing
-credentials and camera frames. An unavailable host cannot serve recovery commands:
+version, capture/foreground state, recent errors and command IDs; they omit camera frames. An unavailable host cannot serve recovery commands:
 if the app has stopped, reopen it on the phone and enable the server again.
 
 ## Local connection details
@@ -88,10 +86,10 @@ After changing Wi-Fi or IP address, stop/start the server to refresh its address
 A busy/invalid port is reported on the phone; choose another port before enabling.
 
 HTTP is the requested private-network transport; certificate setup is unnecessary.
-The listener still requires pairing, validates Host/Origin, limits request bodies
-and worker threads, and permits one controller. A second browser cannot take over
-an existing controller without release or phone-side revocation. Revocation rotates
-the pairing code and invalidates existing credentials. Turning off the server
+The desk is directly available while Run web server is on. Multiple browsers can
+open it; revision checks and command IDs still prevent conflicting edits and
+retries from silently duplicating ownership. Host/Origin checks and request/worker
+limits run automatically. Turning off the server
 also stops capture and removes browser access without deleting inventory. Outbound
 ArkhamDB requests continue using HTTPS.
 
@@ -107,7 +105,7 @@ including a deliberately lost post-commit confirmation response. Permission erro
 are exercised; successful physical camera capture and long mounted sessions still
 need a real-phone test. No live camera feed is sent to the computer.
 
-The Windows/Ubuntu relay, independent read-only viewers, QR pairing, background or
+The Windows/Ubuntu relay, independent read-only viewers, background or
 locked-screen capture, and restorable backups remain future work. JSON is an audit
 export, not a restorable backup. The debug APK is still an alpha.
 

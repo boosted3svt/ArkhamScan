@@ -23,7 +23,7 @@ class RemoteBrowserHarnessTest {
         val dir=File(requireNotNull(System.getProperty("arkhamscan.browserHarnessDir")))
         val server=RemoteHttpServer(compose.activity.assets,vm.remote,0);server.startServer()
         try {
-            File(dir,"ready.json").writeText(JSONObject().put("url","http://127.0.0.1:${server.listeningPort}").put("code",server.pairCode).toString())
+            File(dir,"ready.json").writeText(JSONObject().put("url","http://127.0.0.1:${server.listeningPort}").toString())
             var injected=false
             compose.waitUntil(90_000) {
                 Shadows.shadowOf(Looper.getMainLooper()).idle()

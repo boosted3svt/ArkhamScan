@@ -19,8 +19,6 @@ import java.util.concurrent.atomic.AtomicLong
 class RemoteSession(private val vm: ScanViewModel, private val scope: CoroutineScope) {
     val enabled = MutableStateFlow(false)
     val address = MutableStateFlow("")
-    val pairingCode = MutableStateFlow("")
-    val connected = MutableStateFlow(false)
     val foreground = MutableStateFlow(false)
     val cameraRequest = MutableStateFlow("stopped")
     val cameraStatus = MutableStateFlow("stopped")
@@ -82,7 +80,7 @@ class RemoteSession(private val vm: ScanViewModel, private val scope: CoroutineS
         try {
             val host = RemoteHttpServer(vm.getApplication<Application>().assets, this, port)
             host.startServer()
-            server = host; pairingCode.value = host.pairCode
+            server = host
             address.value = host.addresses.joinToString("\n")
             enabled.value = true
             watch = scope.launch {
@@ -94,10 +92,9 @@ class RemoteSession(private val vm: ScanViewModel, private val scope: CoroutineS
             changed()
         } catch (e: Exception) { error("web server", "Could not listen: ${e.message}"); vm.message.value = "Could not start web server: ${e.message}" }
     }
-    fun revoke() { server?.revoke(); connected.value = false; changed() }
     fun stopServer() {
         server?.stop(); server = null; watch?.cancel(); watch = null
-        enabled.value = false; connected.value = false; pairingCode.value = ""; address.value = ""
+        enabled.value = false; address.value = ""
         cameraRequest.value = "stopped"; cameraStatus.value = "stopped"; newPresentation()
     }
     suspend fun snapshot(): JSONObject = withContext(Dispatchers.Main.immediate) {
@@ -133,7 +130,7 @@ class RemoteSession(private val vm: ScanViewModel, private val scope: CoroutineS
     suspend fun exportAudit() = vm.exportJson()
     fun exportCollection() = vm.exportCsv()
     fun exportProgress(group: String?, outstanding: Boolean) = vm.discoveryCsv(group, outstanding)
-    fun diagnostics(): JSONObject = JSONObject().put("appVersion", "0.5.0-alpha").put("camera", cameraStatus.value)
+    fun diagnostics(): JSONObject = JSONObject().put("appVersion", "0.5.1-alpha").put("camera", cameraStatus.value)
         .put("foreground", foreground.value).put("presentation", presentation).put("lastCommand", JSONObject(lastCommand))
         .put("errors", synchronized(recentErrors) { JSONArray(recentErrors.toList()) })
 

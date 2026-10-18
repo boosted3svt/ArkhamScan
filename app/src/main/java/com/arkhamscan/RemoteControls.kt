@@ -12,8 +12,6 @@ fun RemoteControls(vm: ScanViewModel) {
     var port by remember { mutableStateOf("8080") }
     val enabled by vm.remote.enabled.collectAsState()
     val address by vm.remote.address.collectAsState()
-    val code by vm.remote.pairingCode.collectAsState()
-    val connected by vm.remote.connected.collectAsState()
     val status by vm.remote.cameraStatus.collectAsState()
     Surface(color = MaterialTheme.colorScheme.surfaceVariant) {
         Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -30,9 +28,8 @@ fun RemoteControls(vm: ScanViewModel) {
             if (!enabled) OutlinedTextField(port, { port = it.take(5) }, label = { Text("Local HTTP port") }, singleLine = true)
             Text("Control this mounted phone from a browser on your local network. Keep this app open and unlocked. Grant camera access once in Scan.")
             if (enabled) {
-                SelectionContainer { Column { Text(address); Text("Pairing code: $code") } }
-                Text(if (connected) "Browser controller paired · $status" else "Open the address in a browser and enter the code · $status")
-                OutlinedButton(onClick = { vm.remote.revoke() }) { Text("Revoke browser access") }
+                SelectionContainer { Text(address) }
+                Text("Open the address in a browser · $status")
                 Text("Local HTTP · metadata only · no camera frames leave this phone", style = MaterialTheme.typography.bodySmall)
             }
         }

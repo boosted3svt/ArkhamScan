@@ -118,8 +118,9 @@ selection/confirmation, quantity/undo, attempt review, routing/pile planning,
 source progress, CSV/audit downloads and bounded subsystem recovery. Capture is
 owned by the foreground Activity independently of the native lazy-list preview.
 
-The server is disabled by default. Pairing has revocable credentials, literal-IP
-Host and same-origin validation, request bounds and a bounded worker pool. Live
+The server is disabled by default. Version 0.5.1 opens the desk directly when
+enabled, with no pairing code or login. Literal-IP Host and same-origin validation,
+request bounds and a bounded worker pool run automatically. Live
 SSE snapshots coalesce updates and resynchronize after reconnect; no camera frames
 or queued automatic confirmations cross the connection. Long metadata downloads
 do not hold the inventory-command lock. Separate product/source verification and

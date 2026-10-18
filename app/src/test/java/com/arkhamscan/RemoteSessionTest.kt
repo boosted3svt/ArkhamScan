@@ -115,28 +115,23 @@ class RemoteSessionTest {
         })
         try { waitFor { future.isDone };return future.get() } finally { pool.shutdownNow() }
     }
-    @Test fun actualHttpListenerRequiresPairingOriginAndLiteralHostAndStreamsAuthoritativeState() {
+    @Test fun actualHttpListenerWorksWithoutPairingAndPreservesOriginHostAndRetryChecks() {
         val server=RemoteHttpServer(compose.activity.assets,vm.remote,0);server.startServer()
         try {
             val port=server.listeningPort
             assertTrue(wire(port,"/").contains("Your phone scans."))
-            assertTrue(wire(port,"/api/state").startsWith("HTTP/1.1 401"))
-            assertTrue(wire(port,"/api/pair","POST",JSONObject().put("code",server.pairCode),origin="http://attacker.example").startsWith("HTTP/1.1 403"))
+            assertTrue(wire(port,"/api/state").startsWith("HTTP/1.1 200"))
+            assertTrue(wire(port,"/api/command","POST",body("next"),origin="http://attacker.example").startsWith("HTTP/1.1 403"))
             assertTrue(wire(port,"/api/state",host="attacker.example:$port").startsWith("HTTP/1.1 403"))
-            val paired=wire(port,"/api/pair","POST",JSONObject().put("code",server.pairCode))
-            assertTrue(paired.startsWith("HTTP/1.1 200"))
-            val cookie=Regex("(?i)set-cookie: ([^;]+)").find(paired)!!.groupValues[1]
-            assertTrue(wire(port,"/api/state",cookie=cookie).contains("\"totalCopies\":0"))
-            assertTrue(wire(port,"/api/events",cookie=cookie,event=true).contains("event: state"))
-            assertTrue(wire(port,"/api/pair","POST",JSONObject().put("code",server.pairCode)).startsWith("HTTP/1.1 409"))
+            assertTrue(wire(port,"/api/state").contains("\"totalCopies\":0"))
+            assertTrue(wire(port,"/api/events",event=true).contains("event: state"))
             val selection=body("select").put("card","test:a")
-            assertTrue(wire(port,"/api/command","POST",selection,cookie).contains("\"ok\":true"))
+            assertTrue(wire(port,"/api/command","POST",selection).contains("\"ok\":true"))
             val b=body("confirm").put("card","test:a")
-            assertTrue(wire(port,"/api/command","POST",b,cookie).contains("Pile 1"))
-            assertTrue(wire(port,"/api/command","POST",b,cookie).contains("\"replayed\":true"))
+            assertTrue(wire(port,"/api/command","POST",b).contains("Pile 1"))
+            assertTrue(wire(port,"/api/command","POST",b).contains("\"replayed\":true"))
             assertEquals(1,suspendCall { vm.store.quantity("test:a") })
-            val oldPairCode=server.pairCode
-            server.revoke();assertNotEquals(oldPairCode,server.pairCode);assertTrue(wire(port,"/api/state",cookie=cookie).startsWith("HTTP/1.1 401"))
+
         } finally { server.stop() }
     }
 }

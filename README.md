@@ -7,7 +7,7 @@ validation has not yet been performed.
 
 ## Download the Android alpha
 
-[Download ArkhamScan 0.5.0 alpha (debug APK)](https://github.com/boosted3svt/ArkhamScan/raw/refs/heads/main/downloads/ArkhamScan-0.5.0-alpha-debug.apk)
+[Download ArkhamScan 0.5.1 alpha (debug APK)](https://github.com/boosted3svt/ArkhamScan/raw/refs/heads/main/downloads/ArkhamScan-0.5.1-alpha-debug.apk)
 
 Transfer the APK to your phone and open it to install. Android may ask you to allow
 installation from the browser or file manager you selected. This is a development
@@ -59,7 +59,7 @@ and reference imagery are not implemented. JSON is an audit export, not a restor
 
 Mount the phone, grant camera permission, and enable **Run web server** on Overview
 or Settings. Open the displayed `http://IP:port` from a computer on the same network,
-enter the pairing code, and click **Start scanning** in the browser. Leave the
+and click **Start scanning** in the browser. Leave the
 phone app open and unlocked. Corrections and confirmation update its database.
 See the [remote desk guide](docs/REMOTE.md) for controls and connection recovery.
 
@@ -87,7 +87,7 @@ The existing checkouts are already isolated; do not create Git worktrees for set
 
 ## Get started with ArkhamDB
 
-1. Install the **0.5.0 alpha** APK above over the previous alpha. It uses the same
+1. Install the **0.5.1 alpha** APK above over the previous alpha. It uses the same
    development signing key and migrates schemas 1, 2 or 3 to schema 4 without clearing your
    cards, copies, corrections, pending attempts, or saved pile placements.
 2. With internet available, open **Overview** and tap **Download from ArkhamDB**.
@@ -211,7 +211,7 @@ mismatched pass without changing ownership and physically reconcile its piles.
 ## Privacy and architecture
 
 The APK uses internet for optional ArkhamDB metadata refresh and an opt-in local
-HTTP remote desk. The desk sends metadata and accepts authenticated commands;
+HTTP remote desk. The desk sends metadata and accepts browser commands;
 camera frames stay on the phone. Card reference pages
 open in the user’s browser. Camera recognition stays on-device; frames stay in
 CameraX/ML Kit memory and are

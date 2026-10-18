@@ -1,4 +1,4 @@
-# Validation — 0.5.0 alpha (2026-10-17)
+# Validation — 0.5.1 alpha (2026-10-18)
 
 | Check | Result |
 | --- | --- |
@@ -8,7 +8,7 @@
 | Python catalog converter | 2 passed |
 | Debug / unsigned release APK builds | Passed |
 | Debug lint / release vital lint | Passed with warnings, no errors |
-| Debug APK signature | Verified; same signer as 0.1, 0.2, 0.3 and 0.4 for in-place updates |
+| Debug APK signature | Verified; same signer as 0.1, 0.2, 0.3, 0.4 and 0.5 for in-place updates |
 | Database upgrade | Real schemas 1, 2 and 3 migrated to schema 4; inventory, review state, attempts and pile assignments retained |
 
 Total: 71 automated tests passed, no failed/skipped/error cases.
@@ -20,11 +20,10 @@ with installed desktop Chromium and Playwright.
 
 ## Phone-hosted remote desk
 
-The actual HTTP listener test verifies public packaged assets, pairing, rejected
-foreign Origins and nonliteral Hosts, unauthorized access, exclusive controller
-pairing, SSE under a browser-style Accept-Encoding header, confirmation retries,
-and credential/code rotation on revocation. No CORS relaxation or global Android
-cleartext-policy change is required.
+The actual HTTP listener test verifies direct access without pairing or cookies,
+packaged assets, rejected foreign Origins and nonliteral Hosts, SSE under a
+browser-style Accept-Encoding header, and confirmation retries. No CORS relaxation
+or global Android cleartext-policy change is required.
 
 Command tests verify exactly-one ownership across replay/new coordinators, stale
 presentation and collection-revision rejection, no acknowledgment on rejected
@@ -35,12 +34,13 @@ both a quantity change and its command outcome, and successful outcome persisten
 across a file-backed Room close/reopen.
 
 A separate Chromium test connects to the actual Robolectric phone HTTP service.
-It verifies incorrect/correct pairing, a simulated OCR observation arriving via
+It verifies direct entry without a pairing screen, access from a second browser
+context without credentials, and a simulated OCR observation arriving via
 live SSE without a refresh, search and match selection, then deliberately drops
 the HTTP response after a real confirmation commits. The browser resolves that
 saved result without creating a second copy. It also exercises +/- corrections,
 pile contents, reference-group details, permission-error reporting and diagnostic
-downloads with no pairing secret. A real browser check caught gzip buffering of
+downloads. A real browser check caught gzip buffering of
 small SSE events; SSE compression is now disabled and this case is covered.
 
 Synthetic cards are test-only. These checks do not measure physical camera focus,
@@ -137,3 +137,5 @@ catalog client. Camera frames are not retained to hold suggestions.
 - `downloads/ArkhamScan-0.4.0-alpha-debug.apk`: SHA-256 `81fc9d5839abf74d9d547358030439ee325c620a4e0aa66c738ffb9e528d45d7`
 
 - `downloads/ArkhamScan-0.5.0-alpha-debug.apk`: SHA-256 `8ad7367aa60688a15bd757af1e7a7db6b63a1d07726d0cad7348165d856e7df6`
+
+- `downloads/ArkhamScan-0.5.1-alpha-debug.apk`: SHA-256 `00a985b3593089d68a2666398f5c08eaa4899916c62863c43e36ba4c71f8c2c1`
